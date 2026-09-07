@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+
+# SQLite Database & Write-Ahead Logs
+.vibesync/*.db
+.vibesync/*.db-wal
+.vibesync/*.db-shm
+
+# Offloaded Test & Gate Artifact Logs
+.vibesync/artifacts/
+
+# Runtime Logs
+.vibesync/*.log
+
+# Ambient HUD Loopback URL
+.vibesync/hud.url
+
+# Ephemeral Active Task Anchor (worktrees and root)
+.vibesync_ACTIVE_TASK.md
+
+# Sandbox Git repo fallback
+.git_repo/
+
+# Ephemeral Paired Agent Worktrees & Temp files
+.vibesync/worktrees/
+.vibesync/.chromium-temp/
+
+
+# Browser verification artifacts
+.playwright-cli/
+output/playwright/
+
+# Recovery backups
+.vibesync/backups/
+
+# Local scratch and test output
+scratch/
+output/
+
+# Private development history and machine-specific integration
+.agents/
+.codex/
+.local-archive/
+.mcp.json
+.vibesync/usage.json
+
+# Credentials and private keys (keep only explicit examples)
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+
+# Local tooling and release exports
+.DS_Store
+Thumbs.db
+*.log
+*.tgz
+public-export/

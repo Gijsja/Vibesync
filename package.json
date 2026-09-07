@@ -1,0 +1,58 @@
+{
+  "name": "vibesync",
+  "version": "1.0.0",
+  "description": "Git-native coordination harness and stdio Model Context Protocol (MCP) server for concurrent AI pair-programming",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./config": "./src/config.mjs",
+    "./db": "./src/db.mjs",
+    "./incubator": "./src/incubator.mjs",
+    "./features": "./src/features.mjs",
+    "./tasks": "./src/tasks.mjs",
+    "./guard": "./src/guard.mjs",
+    "./gatekeeper": "./src/gatekeeper.mjs",
+    "./merge": "./src/merge.mjs",
+    "./settle": "./src/settle.mjs",
+    "./server": "./src/server.mjs",
+    "./mcp": "./src/mcp.mjs",
+    "./repair": "./src/repair.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/**/*.test.mjs",
+    "test:runner": "node tests/runner.mjs",
+    "test:m1": "node --test tests/m1-state-engine.test.mjs",
+    "test:m2": "node --test tests/m2-judicial-harness.test.mjs",
+    "start": "node scripts/vibesync.mjs",
+    "init": "node scripts/vibesync-init.mjs",
+    "repair": "node scripts/vibesync-repair.mjs",
+    "hud": "node scripts/vibesync.mjs --hud",
+    "check:public": "node scripts/check-public.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "picomatch": "^4.0.7"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "license": "MIT",
+  "bin": {
+    "vibesync": "./scripts/vibesync.mjs",
+    "vibesync-init": "./scripts/vibesync-init.mjs",
+    "vibesync-repair": "./scripts/vibesync-repair.mjs"
+  },
+  "files": [
+    "src/",
+    "scripts/vibesync.mjs",
+    "scripts/vibesync-init.mjs",
+    "scripts/vibesync-repair.mjs",
+    ".vibesync/dashboard.html",
+    "README.md",
+    "HARDENING.md",
+    "docs/USAGE.md",
+    "SECURITY.md"
+  ]
+}

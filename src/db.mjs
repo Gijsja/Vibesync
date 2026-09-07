@@ -1,0 +1,379 @@
+import { checkpointState, registerStateRoot } from './durability.mjs';
+export { checkpointState } from './durability.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {
+  SQLITE_BUSY_TIMEOUT_MS,
+  ARTIFACT_HASH_LENGTH,
+  getDbPath,
+  getArtifactsDir
+} from './config.mjs';
+
+export const SCHEMA_DDL = `
+CREATE TABLE IF NOT EXISTS incubator (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL CHECK(category IN (
+        'speculative_feature',
+        'architecture_insight',
+        'debt',
+        'ux_polish',
+        'convention'
+    )),
+    target_scope TEXT,
+    context_notes TEXT NOT NULL,
+    logged_by TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'parked' CHECK(status IN (
+        'parked',
+        'promoted',
+        'discarded',
+        'merged'
+    )),
+    promoted_feature_id TEXT,
+    merged_into_id TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (promoted_feature_id) REFERENCES features(id) ON DELETE SET NULL,
+    FOREIGN KEY (merged_into_id) REFERENCES incubator(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS features (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    target_milestone TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ready' CHECK(status IN (
+        'draft',
+        'ready',
+        'in_progress',
+        'settled'
+    )),
+    priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN (
+        'urgent',
+        'high',
+        'medium',
+        'low'
+    )),
+    labels JSON NOT NULL DEFAULT '[]',
+    external_ref TEXT,
+    spec_markdown TEXT NOT NULL,
+    holistic_gate_cmd TEXT,
+    settled_commit TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    settled_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    feature_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ready' CHECK(status IN (
+        'backlog',
+        'ready',
+        'in_progress',
+        'review',
+        'settled',
+        'blocked'
+    )),
+    priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN (
+        'urgent',
+        'high',
+        'medium',
+        'low'
+    )),
+    labels JSON NOT NULL DEFAULT '[]',
+    external_ref TEXT,
+    assigned_actor TEXT,
+    branch_name TEXT,
+    base_commit TEXT,
+    settled_commit TEXT,
+    allowed_paths JSON NOT NULL DEFAULT '["*"]',
+    required_gates JSON NOT NULL DEFAULT '[]',
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    max_failures INTEGER NOT NULL DEFAULT 3,
+    lease_expires_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS settlement_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT,
+    feature_id TEXT,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN (
+        'incubator_logged',
+        'incubator_merged',
+        'feature_created',
+        'task_claimed',
+        'gate_failed',
+        'gate_passed',
+        'circuit_breaker_tripped',
+        'task_settled',
+        'feature_settled',
+        'lease_released',
+        'ejected_to_human',
+        'repaired_from_git'
+    )),
+    commit_ref TEXT NOT NULL,
+    artifact_hash TEXT,
+    evidence_payload JSON,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+    FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE TABLE IF NOT EXISTS operations (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('task', 'feature')),
+    target_id TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed')),
+    owner_pid INTEGER NOT NULL,
+    result_json TEXT,
+    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    finished_at DATETIME
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_running_operation ON operations(status) WHERE status = 'running';
+
+CREATE INDEX IF NOT EXISTS idx_tasks_feature ON tasks(feature_id);
+CREATE INDEX IF NOT EXISTS idx_features_status ON features(status);
+CREATE INDEX IF NOT EXISTS idx_incubator_status ON incubator(status);
+CREATE INDEX IF NOT EXISTS idx_settlement_timestamp ON settlement_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_settlement_task ON settlement_events(task_id);
+CREATE INDEX IF NOT EXISTS idx_settlement_feature ON settlement_events(feature_id);
+`;
+
+let _activeDb = null;
+let _activeDbPath = null;
+
+export function migrateSchema(db) {
+  // Ensure incubator table has updated CHECK constraints and columns
+  const ddl = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='incubator'").get()?.sql || '';
+  if (ddl && (!ddl.includes("'convention'") || !ddl.includes("'merged'"))) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS incubator_migrated (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          category TEXT NOT NULL CHECK(category IN ('speculative_feature', 'architecture_insight', 'debt', 'ux_polish', 'convention')),
+          target_scope TEXT,
+          context_notes TEXT NOT NULL,
+          logged_by TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'parked' CHECK(status IN ('parked', 'promoted', 'discarded', 'merged')),
+          promoted_feature_id TEXT,
+          merged_into_id TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (promoted_feature_id) REFERENCES features(id) ON DELETE SET NULL,
+          FOREIGN KEY (merged_into_id) REFERENCES incubator(id) ON DELETE SET NULL
+      );
+      INSERT INTO incubator_migrated (
+        id, title, category, target_scope, context_notes, logged_by, status, promoted_feature_id, created_at, updated_at
+      )
+      SELECT 
+        id, title, category, NULL, context_notes, logged_by, status, promoted_feature_id, created_at, updated_at
+      FROM incubator;
+      DROP TABLE incubator;
+      ALTER TABLE incubator_migrated RENAME TO incubator;
+      CREATE INDEX IF NOT EXISTS idx_incubator_status ON incubator(status);
+    `);
+  } else {
+    const incubatorCols = db.prepare("PRAGMA table_info(incubator)").all().map(c => c.name);
+    if (incubatorCols.length > 0) {
+      if (!incubatorCols.includes('target_scope')) {
+        db.exec("ALTER TABLE incubator ADD COLUMN target_scope TEXT;");
+      }
+      if (!incubatorCols.includes('merged_into_id')) {
+        db.exec("ALTER TABLE incubator ADD COLUMN merged_into_id TEXT;");
+      }
+    }
+  }
+
+  // Ensure settlement_events table has updated action CHECK constraints
+  const eventsDdl = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='settlement_events'").get()?.sql || '';
+  if (eventsDdl && !eventsDdl.includes("'incubator_merged'")) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS settlement_events_migrated (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id TEXT,
+          feature_id TEXT,
+          actor TEXT NOT NULL,
+          action TEXT NOT NULL CHECK(action IN (
+              'incubator_logged',
+              'incubator_merged',
+              'feature_created',
+              'task_claimed',
+              'gate_failed',
+              'gate_passed',
+              'circuit_breaker_tripped',
+              'task_settled',
+              'feature_settled',
+              'lease_released',
+              'ejected_to_human',
+              'repaired_from_git'
+          )),
+          commit_ref TEXT NOT NULL,
+          artifact_hash TEXT,
+          evidence_payload JSON,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+          FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE SET NULL
+      );
+      INSERT INTO settlement_events_migrated SELECT * FROM settlement_events;
+      DROP TABLE settlement_events;
+      ALTER TABLE settlement_events_migrated RENAME TO settlement_events;
+      CREATE INDEX IF NOT EXISTS idx_settlement_timestamp ON settlement_events(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_settlement_task ON settlement_events(task_id);
+      CREATE INDEX IF NOT EXISTS idx_settlement_feature ON settlement_events(feature_id);
+    `);
+  }
+
+  // Ensure features table has industry-standard columns
+  const featureCols = db.prepare("PRAGMA table_info(features)").all().map(c => c.name);
+  if (featureCols.length > 0) {
+    if (!featureCols.includes('priority')) {
+      db.exec("ALTER TABLE features ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('urgent', 'high', 'medium', 'low'));");
+    }
+    if (!featureCols.includes('labels')) {
+      db.exec("ALTER TABLE features ADD COLUMN labels JSON NOT NULL DEFAULT '[]';");
+    }
+    if (!featureCols.includes('external_ref')) {
+      db.exec("ALTER TABLE features ADD COLUMN external_ref TEXT;");
+    }
+  }
+
+  // Ensure tasks table has industry-standard columns
+  const taskCols = db.prepare("PRAGMA table_info(tasks)").all().map(c => c.name);
+  if (taskCols.length > 0) {
+    if (!taskCols.includes('worktree_path')) db.exec('ALTER TABLE tasks ADD COLUMN worktree_path TEXT;');
+    if (!taskCols.includes('priority')) {
+      db.exec("ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('urgent', 'high', 'medium', 'low'));");
+    }
+    if (!taskCols.includes('labels')) {
+      db.exec("ALTER TABLE tasks ADD COLUMN labels JSON NOT NULL DEFAULT '[]';");
+    }
+    if (!taskCols.includes('external_ref')) {
+      db.exec("ALTER TABLE tasks ADD COLUMN external_ref TEXT;");
+    }
+  }
+}
+
+export function initSchema(db) {
+  db.exec(SCHEMA_DDL);
+  migrateSchema(db);
+}
+
+export function getDb(dbPath, repoRoot = process.cwd()) {
+  if (!dbPath && _activeDb && _activeDb.isOpen &&
+      (arguments.length === 0 || _activeDbPath === path.resolve(getDbPath(repoRoot)))) {
+    return _activeDb;
+  }
+
+  const targetPath = dbPath || getDbPath(repoRoot);
+  if (targetPath !== ':memory:') {
+    const parentDir = path.dirname(targetPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+  }
+
+  const db = new DatabaseSync(targetPath);
+  db.exec('PRAGMA foreign_keys = ON;');
+  db.exec('PRAGMA journal_mode = WAL;');
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};`);
+  initSchema(db);
+  if (targetPath !== ':memory:') registerStateRoot(db, path.basename(path.dirname(targetPath)) === '.vibesync' ? path.dirname(path.dirname(path.resolve(targetPath))) : repoRoot);
+
+  if (!dbPath) {
+    _activeDb = db;
+    _activeDbPath = path.resolve(targetPath);
+  }
+  return db;
+}
+
+export function closeDb(db) {
+  const target = db || _activeDb;
+  if (target && target.isOpen) {
+    target.close();
+  }
+  if (target === _activeDb) {
+    _activeDb = null;
+  }
+}
+
+export function withTransaction(db, fn) {
+  db.exec('BEGIN IMMEDIATE;');
+  try {
+    const result = fn();
+    db.exec('COMMIT;');
+    checkpointState(db);
+    return result;
+  } catch (err) {
+    try {
+      db.exec('ROLLBACK;');
+    } catch {}
+    throw err;
+  }
+}
+
+export function saveArtifact(content, repoRoot = process.cwd()) {
+  const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+  const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, ARTIFACT_HASH_LENGTH);
+  const artifactsDir = getArtifactsDir(repoRoot);
+  if (!fs.existsSync(artifactsDir)) {
+    fs.mkdirSync(artifactsDir, { recursive: true });
+  }
+  fs.writeFileSync(path.join(artifactsDir, `${hash}.log`), text, 'utf8');
+  return hash;
+}
+
+export function readArtifact(hash, repoRoot = process.cwd()) {
+  if (typeof hash !== 'string' || !new RegExp(`^[a-f0-9]{${ARTIFACT_HASH_LENGTH}}$`).test(hash)) return null;
+  const filePath = path.join(getArtifactsDir(repoRoot), `${hash}.log`);
+  if (fs.existsSync(filePath)) {
+    if (fs.lstatSync(filePath).isSymbolicLink()) return null;
+    return fs.readFileSync(filePath, 'utf8');
+  }
+  return null;
+}
+
+export function recordSettlementEvent(db, event) {
+  const {
+    task_id = null,
+    feature_id = null,
+    actor,
+    action,
+    commit_ref,
+    artifact_hash = null,
+    evidence_payload = null
+  } = event;
+
+  if (!actor || !action || !commit_ref) {
+    throw new Error('recordSettlementEvent: "actor", "action", and "commit_ref" are required.');
+  }
+
+  const payloadJson = evidence_payload !== null && evidence_payload !== undefined
+    ? (typeof evidence_payload === 'string' ? evidence_payload : JSON.stringify(evidence_payload))
+    : null;
+
+  const stmt = db.prepare(`
+    INSERT INTO settlement_events (
+      task_id, feature_id, actor, action, commit_ref, artifact_hash, evidence_payload
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const result = stmt.run(
+    task_id,
+    feature_id,
+    actor,
+    action,
+    commit_ref,
+    artifact_hash,
+    payloadJson
+  );
+
+  checkpointState(db);
+  return Number(result.lastInsertRowid);
+}

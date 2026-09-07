@@ -1,0 +1,501 @@
+/**
+ * src/gatekeeper.mjs
+ * 
+ * VibeSync Shift-Left Gatekeeper & 3-Strike Circuit Breaker
+ * Milestone 2: Git Judicial Harness (Features 16–19)
+ */
+
+import { spawnSync } from 'node:child_process';
+import { getDb, recordSettlementEvent, saveArtifact } from './db.mjs';
+import { getTask } from './tasks.mjs';
+import { checkScopeBoundary } from './guard.mjs';
+import { execGitWithBackoff } from './incubator.mjs';
+import { MAX_FAILURES } from './config.mjs';
+
+/**
+ * Resolves current Git HEAD commit SHA safely.
+ * 
+ * @param {string} [repoRoot=process.cwd()]
+ * @returns {string}
+ */
+export function getGitHead(repoRoot = process.cwd()) {
+  try {
+    return execGitWithBackoff('git rev-parse --short HEAD', { cwd: repoRoot });
+  } catch {
+    return '0000000';
+  }
+}
+
+/**
+ * Executes a single gate command within a target directory via isolated subprocess.
+ * Asserts real OS exit code 0.
+ * 
+ * @param {string} cmd - Shell command string (e.g. "npm test")
+ * @param {string|object} [cwdOrOptions=process.cwd()] - Working directory or options object
+ * @param {object} [options={}] - Additional options (timeout, env, maxBuffer)
+ * @returns {{ success: boolean, cmd: string, exitCode: number, stdout: string, stderr: string, error?: string }}
+ */
+export function runGateCommand(cmd, cwdOrOptions = process.cwd(), options = {}) {
+  let cwd = process.cwd();
+  let opts = {};
+
+  if (typeof cwdOrOptions === 'object' && cwdOrOptions !== null) {
+    opts = cwdOrOptions;
+    cwd = opts.cwd || process.cwd();
+  } else {
+    cwd = cwdOrOptions || process.cwd();
+    opts = options || {};
+  }
+
+  const timeout = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : (typeof opts.timeout === 'number' ? opts.timeout : 300000);
+  const maxBuffer = opts.maxBuffer || 10 * 1024 * 1024;
+  const env = opts.env || {};
+
+  if (typeof cmd !== 'string' || !cmd.trim()) {
+    return {
+      success: false,
+      cmd: cmd || '',
+      exitCode: 1,
+      stdout: '',
+      stderr: 'Invalid or empty gate command',
+      error: 'Invalid or empty gate command'
+    };
+  }
+
+  const proc = spawnSync(cmd, {
+    cwd,
+    shell: true,
+    encoding: 'utf8',
+    timeout,
+    maxBuffer,
+    env: { ...process.env, ...env }
+  });
+
+  const stdout = proc.stdout || '';
+  const stderr = proc.stderr || '';
+  const exitCode = proc.status !== null ? proc.status : (proc.error ? 1 : 0);
+  let errorMsg = proc.error ? proc.error.message : null;
+
+  if (proc.error && proc.error.code === 'ETIMEDOUT') {
+    errorMsg = `Gate command timed out after ${timeout}ms`;
+  } else if (exitCode !== 0 && !errorMsg) {
+    errorMsg = `Gate command exited with non-zero code ${exitCode}`;
+  }
+
+  const success = proc.status === 0 && !proc.error;
+
+  return {
+    success,
+    cmd,
+    exitCode,
+    stdout,
+    stderr,
+    error: errorMsg || undefined
+  };
+}
+
+// Aliases for runGateCommand
+export const executeGateCommand = runGateCommand;
+export const executeGate = runGateCommand;
+
+/**
+ * Sequentially executes an array of required gate commands with fail-fast (shift-left) behavior.
+ * Halts immediately upon first non-zero exit code.
+ * 
+ * @param {string[]|string} gates - Array of shell commands or JSON string
+ * @param {string|object} [cwdOrOptions=process.cwd()]
+ * @param {object} [maybeOptions={}]
+ * @returns {{ success: boolean, pass: boolean, gatesRun: Array<{ cmd: string, exitCode: number, status: string }>, failedGate?: object, errorPayload?: object }}
+ */
+export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions = {}) {
+  let cwd = process.cwd();
+  let opts = {};
+
+  if (typeof cwdOrOptions === 'object' && cwdOrOptions !== null) {
+    opts = cwdOrOptions;
+    cwd = opts.cwd || process.cwd();
+  } else {
+    cwd = cwdOrOptions || process.cwd();
+    opts = maybeOptions || {};
+  }
+
+  let gatesList = gates;
+  if (typeof gatesList === 'string') {
+    try {
+      gatesList = JSON.parse(gatesList);
+    } catch {
+      gatesList = [gatesList];
+    }
+  }
+  if (!Array.isArray(gatesList)) {
+    gatesList = [];
+  }
+
+  const gatesRun = [];
+
+  for (const gate of gatesList) {
+    const res = runGateCommand(gate, cwd, opts);
+    if (!res.success) {
+      return {
+        success: false,
+        pass: false,
+        gatesRun,
+        failedGate: res,
+        errorPayload: {
+          cmd: res.cmd,
+          exitCode: res.exitCode,
+          stdout: res.stdout,
+          stderr: res.stderr,
+          error: res.error
+        }
+      };
+    }
+    gatesRun.push({ cmd: gate, exitCode: 0, status: 'PASS', stdout: res.stdout, stderr: res.stderr });
+  }
+
+  return {
+    success: true,
+    pass: true,
+    gatesRun
+  };
+}
+
+// Aliases for executeGates
+export const executeAllGates = executeGates;
+
+/**
+ * Records a gate, scope, or collision failure: updates failure counters,
+ * evaluates the 3-strike circuit breaker, offloads logs, and records settlement events.
+ * 
+ * @param {DatabaseSync} db - SQLite database handle
+ * @param {string|object} taskIdOrTask - Task ID or task record
+ * @param {string|object} errorDetails - Failure trace or structured log
+ * @param {object} [options={}]
+ * @param {string} [options.actorName='unknown']
+ * @param {string} [options.repoRoot=process.cwd()]
+ * @param {string} [options.commitRef]
+ * @returns {{ success: false, status: string, consecutive_failures: number, consecutiveFailures: number, is_blocked: boolean, isTripped: boolean, artifactHash: string, error: string }}
+ */
+export function recordGateFailure(db, taskIdOrTask, errorDetails, options = {}) {
+  const {
+    actorName = 'unknown',
+    repoRoot = process.cwd(),
+    commitRef = null
+  } = options;
+
+  let taskId;
+  let task;
+
+  if (typeof taskIdOrTask === 'object' && taskIdOrTask !== null) {
+    taskId = taskIdOrTask.id;
+    task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) || taskIdOrTask;
+  } else {
+    taskId = taskIdOrTask;
+    task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+  }
+
+  if (!task) {
+    throw new Error(`Task ${taskId} not found.`);
+  }
+
+  const maxFailures = task.max_failures || MAX_FAILURES;
+  const failures = (task.consecutive_failures || 0) + 1;
+  const isBlocked = failures >= maxFailures;
+  const nextStatus = isBlocked ? 'blocked' : (task.status === 'blocked' ? 'blocked' : 'in_progress');
+
+  // Format error payload and offload to artifacts
+  const payloadText = typeof errorDetails === 'string'
+    ? errorDetails
+    : JSON.stringify(errorDetails, null, 2);
+
+  const artifactHash = saveArtifact(payloadText, repoRoot);
+  const headSha = commitRef || getGitHead(repoRoot);
+
+  // Update task in database
+  db.prepare(`
+    UPDATE tasks
+    SET status = ?,
+        consecutive_failures = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(nextStatus, failures, taskId);
+
+  // Record audit ledger event
+  recordSettlementEvent(db, {
+    task_id: taskId,
+    feature_id: task.feature_id,
+    actor: actorName || task.assigned_actor || 'unknown',
+    action: isBlocked ? 'circuit_breaker_tripped' : 'gate_failed',
+    commit_ref: headSha,
+    artifact_hash: artifactHash,
+    evidence_payload: {
+      failures,
+      max_failures: maxFailures,
+      is_blocked: isBlocked,
+      error_summary: payloadText.slice(0, 500)
+    }
+  });
+
+  return {
+    success: false,
+    status: nextStatus,
+    consecutive_failures: failures,
+    consecutiveFailures: failures,
+    is_blocked: isBlocked,
+    isTripped: isBlocked,
+    artifactHash,
+    error: payloadText
+  };
+}
+
+// Alias for recordGateFailure
+export const handleGateFailure = recordGateFailure;
+
+/**
+ * Resets gate failure counter upon successful verification.
+ * 
+ * @param {DatabaseSync} db
+ * @param {string} taskId
+ * @param {object} [options={}]
+ * @param {string} [options.actorName]
+ * @param {string} [options.commitRef]
+ * @param {string} [options.repoRoot=process.cwd()]
+ * @param {Array<object>} [options.gatesRun=[]]
+ */
+export function resetGateFailures(db, taskId, options = {}) {
+  const {
+    actorName = null,
+    commitRef = null,
+    repoRoot = process.cwd(),
+    gatesRun = []
+  } = options;
+
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+  if (!task) return;
+
+  db.prepare(`
+    UPDATE tasks
+    SET consecutive_failures = 0,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(taskId);
+
+  const headSha = commitRef || getGitHead(repoRoot);
+
+  recordSettlementEvent(db, {
+    task_id: taskId,
+    feature_id: task.feature_id,
+    actor: actorName || task.assigned_actor || 'system',
+    action: 'gate_passed',
+    commit_ref: headSha,
+    artifact_hash: gatesRun.length ? saveArtifact(JSON.stringify(gatesRun, null, 2), repoRoot) : null,
+    evidence_payload: {
+      gates_run: gatesRun
+    }
+  });
+}
+
+/**
+ * High-level gate execution wrapper for tasks: runs required gates and tracks failures/resets in DB.
+ * 
+ * Supports signatures:
+ * - executeRequiredGates(taskId, gates, cwd, options)
+ * - executeRequiredGates(gates, cwd, options)
+ * 
+ * @param {string|Array<string>} taskIdOrGates
+ * @param {Array<string>|string} [gatesOrCwd]
+ * @param {string|object} [cwdOrOptions]
+ * @param {object} [maybeOptions={}]
+ * @returns {{ success: boolean, pass: boolean, gatesRun: any[], failedGate?: any, error?: string, status?: string, consecutiveFailures?: number, artifactHash?: string }}
+ */
+export function executeRequiredGates(taskIdOrGates, gatesOrCwd, cwdOrOptions, maybeOptions = {}) {
+  let taskId = null;
+  let gates = [];
+  let cwd = process.cwd();
+  let options = {};
+
+  if (typeof taskIdOrGates === 'string' && (taskIdOrGates.startsWith('TASK-') || !Array.isArray(gatesOrCwd))) {
+    taskId = taskIdOrGates;
+    gates = gatesOrCwd;
+    if (typeof cwdOrOptions === 'object' && cwdOrOptions !== null) {
+      options = cwdOrOptions;
+      cwd = options.cwd || process.cwd();
+    } else {
+      cwd = cwdOrOptions || process.cwd();
+      options = maybeOptions || {};
+    }
+  } else {
+    gates = taskIdOrGates;
+    if (typeof gatesOrCwd === 'object' && gatesOrCwd !== null) {
+      options = gatesOrCwd;
+      cwd = options.cwd || process.cwd();
+    } else {
+      cwd = gatesOrCwd || process.cwd();
+      options = cwdOrOptions || {};
+    }
+  }
+
+  const db = options.db || getDb();
+  const repoRoot = options.repoRoot || process.cwd();
+  const actorName = options.actorName || 'unknown';
+
+  const res = executeGates(gates, cwd, options);
+
+  if (!res.success) {
+    const errorDetails = [
+      `Gate Failed: ${res.failedGate.cmd}`,
+      `Exit Code: ${res.failedGate.exitCode}`,
+      res.failedGate.stdout ? `\n--- STDOUT ---\n${res.failedGate.stdout}` : '',
+      res.failedGate.stderr ? `\n--- STDERR ---\n${res.failedGate.stderr}` : '',
+      res.failedGate.error ? `\n--- ERROR ---\n${res.failedGate.error}` : ''
+    ].join('\n');
+
+    let failInfo = null;
+    if (taskId) {
+      failInfo = recordGateFailure(db, taskId, errorDetails, {
+        actorName,
+        repoRoot
+      });
+    }
+
+    return {
+      success: false,
+      pass: false,
+      phase: 'GATE_FAILURE',
+      failedGate: res.failedGate,
+      gatesRun: res.gatesRun,
+      error: errorDetails,
+      status: failInfo?.status,
+      consecutive_failures: failInfo?.consecutive_failures,
+      consecutiveFailures: failInfo?.consecutiveFailures,
+      is_blocked: failInfo?.is_blocked,
+      artifactHash: failInfo?.artifactHash
+    };
+  }
+
+  if (taskId) {
+    resetGateFailures(db, taskId, {
+      actorName,
+      repoRoot,
+      gatesRun: res.gatesRun
+    });
+  }
+
+  return {
+    success: true,
+    pass: true,
+    phase: 'GATES_PASSED',
+    gatesRun: res.gatesRun
+  };
+}
+
+/**
+ * Orchestrates complete Gatekeeper verification: Path Guard check + Shift-Left Subprocess Gates.
+ * 
+ * @param {object} params
+ * @param {string} params.taskId
+ * @param {string} [params.cwd]
+ * @param {string} [params.repoRoot=process.cwd()]
+ * @param {string} [params.actorName]
+ * @param {boolean} [params.skipGuard=false]
+ * @param {DatabaseSync} [db]
+ * @returns {{ success: boolean, phase: string, gatesRun?: any[], error?: any, status?: string, failures?: number, consecutiveFailures?: number, artifactHash?: string, violations?: string[] }}
+ */
+export function executeGatekeeper(params, db = getDb()) {
+  const {
+    taskId,
+    cwd,
+    repoRoot = process.cwd(),
+    actorName = 'unknown',
+    skipGuard = false,
+    timeoutMs,
+    timeout,
+    env,
+    maxBuffer
+  } = params;
+
+  const task = getTask(taskId, db);
+  if (!task) {
+    throw new Error(`Task ${taskId} not found.`);
+  }
+
+  if (task.status !== 'in_progress') {
+    throw new Error(`Task ${taskId} is not in_progress (status: ${task.status}).`);
+  }
+
+  const targetDir = cwd || repoRoot;
+
+  // 1. Path Whitelist Guard
+  if (!skipGuard) {
+    const scopeCheck = checkScopeBoundary(targetDir, task.allowed_paths, {
+      baseCommit: task.base_commit,
+      repoRoot
+    });
+
+    if (!scopeCheck.valid) {
+      const failInfo = recordGateFailure(db, taskId, scopeCheck.error, {
+        actorName,
+        repoRoot
+      });
+
+      return {
+        success: false,
+        phase: 'SCOPE_VIOLATION',
+        error: scopeCheck.error,
+        violations: scopeCheck.violations,
+        status: failInfo.status,
+        failures: failInfo.consecutive_failures,
+        consecutiveFailures: failInfo.consecutiveFailures,
+        artifactHash: failInfo.artifactHash
+      };
+    }
+  }
+
+  // 2. Shift-Left Gate Execution
+  const gatesResult = executeGates(task.required_gates, {
+    cwd: targetDir,
+    timeoutMs,
+    timeout,
+    env,
+    maxBuffer
+  });
+
+  if (!gatesResult.success) {
+    const errorDetails = [
+      `Gate Failed: ${gatesResult.failedGate.cmd}`,
+      `Exit Code: ${gatesResult.failedGate.exitCode}`,
+      gatesResult.failedGate.stdout ? `\n--- STDOUT ---\n${gatesResult.failedGate.stdout}` : '',
+      gatesResult.failedGate.stderr ? `\n--- STDERR ---\n${gatesResult.failedGate.stderr}` : '',
+      gatesResult.failedGate.error ? `\n--- ERROR ---\n${gatesResult.failedGate.error}` : ''
+    ].join('\n');
+
+    const failInfo = recordGateFailure(db, taskId, errorDetails, {
+      actorName,
+      repoRoot
+    });
+
+    return {
+      success: false,
+      phase: 'GATE_FAILURE',
+      error: errorDetails,
+      failedGate: gatesResult.failedGate,
+      status: failInfo.status,
+      failures: failInfo.consecutive_failures,
+      consecutiveFailures: failInfo.consecutiveFailures,
+      artifactHash: failInfo.artifactHash
+    };
+  }
+
+  // 3. Verification Success
+  resetGateFailures(db, taskId, {
+    actorName,
+    repoRoot,
+    gatesRun: gatesResult.gatesRun
+  });
+
+  return {
+    success: true,
+    phase: 'GATES_PASSED',
+    gatesRun: gatesResult.gatesRun
+  };
+}

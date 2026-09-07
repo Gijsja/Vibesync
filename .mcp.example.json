@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "vibesync": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/Vibesync/scripts/vibesync.mjs",
+        "--repo",
+        "/absolute/path/to/your-project"
+      ]
+    }
+  }
+}
