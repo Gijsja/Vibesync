@@ -6,6 +6,8 @@
  */
 
 import path from 'node:path';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
 import picomatch from 'picomatch';
 import { execGitWithBackoff } from './incubator.mjs';
 
@@ -156,6 +158,65 @@ export function getChangedFiles(baseCommitOrOptions, maybeWorktreePath, maybeOpt
  */
 export function getWorktreeChangedFiles(worktreePath, baseRef = 'main') {
   return getChangedFiles(baseRef, worktreePath);
+}
+
+/**
+ * Captures the persistent workspace state that a gate is capable of changing.
+ * Only tracked and non-ignored untracked files are included; OS sandboxing is
+ * still required when ignored paths or transient writes must be contained.
+ */
+export function captureWorkspaceState(cwd = process.cwd()) {
+  const files = getChangedFiles({ cwd });
+  const entries = {};
+  for (const file of files) {
+    const absolute = path.join(cwd, file);
+    try {
+      const stat = fs.lstatSync(absolute);
+      if (stat.isSymbolicLink()) entries[file] = `symlink:${fs.readlinkSync(absolute)}`;
+      else if (stat.isFile()) entries[file] = `file:${crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')}`;
+      else entries[file] = `other:${stat.mode}:${stat.size}:${stat.mtimeMs}`;
+    } catch (error) {
+      if (error.code === 'ENOENT') entries[file] = 'missing';
+      else throw error;
+    }
+  }
+  let head = null;
+  try { head = execGitWithBackoff(['rev-parse', 'HEAD'], { cwd }); } catch {}
+  return { head, entries };
+}
+
+/** Return paths persistently changed between two gate workspace snapshots. */
+export function diffWorkspaceStates(before, after) {
+  const files = new Set([...Object.keys(before?.entries || {}), ...Object.keys(after?.entries || {})]);
+  return [...files].filter(file => before?.entries?.[file] !== after?.entries?.[file]).sort();
+}
+
+/**
+ * Enforces both the task's outer boundary and a gate's optional narrower
+ * write_paths declaration. Git history mutation is never a permitted gate write.
+ */
+export function validateWorkspaceWriteDelta(before, after, allowedPaths = ['*'], declaredWritePaths = []) {
+  const writes = diffWorkspaceStates(before, after);
+  const taskCheck = validatePathWhitelist(writes, allowedPaths);
+  const declaration = Array.isArray(declaredWritePaths) && declaredWritePaths.length ? declaredWritePaths : allowedPaths;
+  const declarationCheck = validatePathWhitelist(writes, declaration);
+  const gitMutation = Boolean(before?.head && after?.head && before.head !== after.head);
+  const violations = [...new Set([
+    ...taskCheck.violations,
+    ...declarationCheck.violations,
+    ...(gitMutation ? ['.git/HEAD'] : [])
+  ])].sort();
+  return {
+    valid: violations.length === 0,
+    writes,
+    violations,
+    allowedPatterns: taskCheck.allowedPatterns,
+    declaredWritePaths: declaration,
+    gitMutation,
+    error: violations.length
+      ? `Gate Write Scope Violation: command persisted changes outside its declared boundary:\n${violations.join('\n')}`
+      : null
+  };
 }
 
 /**

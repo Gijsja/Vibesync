@@ -69,6 +69,9 @@ export function resolveCommandSpec(command, { cwd = process.cwd(), phase = 'gate
     timeoutMs = command.timeout_ms ?? null;
     network = command.network === true;
     writePaths = stringList(command.write_paths, 'write_paths');
+    if (writePaths.some(item => path.isAbsolute(item) || item.replace(/\\/g, '/').split('/').includes('..'))) {
+      throw new Error('write_paths must contain repository-relative paths without traversal segments.');
+    }
     idempotency = command.idempotency || 'safe';
     if (!['safe', 'unsafe'].includes(idempotency)) throw new Error('idempotency must be "safe" or "unsafe".');
     if (timeoutMs !== null && (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000)) throw new Error('timeout_ms must be between 1 and 3600000.');
@@ -140,7 +143,32 @@ function hasBubblewrap() {
   return bubblewrapAvailable;
 }
 
-export function prepareSandboxedCommand(spec, cwd, repoRoot = process.cwd()) {
+function bubblewrapWriteRoots(cwd, writePaths) {
+  const scopes = Array.isArray(writePaths) && writePaths.length ? writePaths : ['*'];
+  if (scopes.some(item => item === '*' || item === '**')) return [path.resolve(cwd)];
+  const roots = new Set();
+  for (const item of scopes) {
+    const normalized = item.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (!normalized || path.isAbsolute(normalized) || normalized.split('/').includes('..')) {
+      throw new Error('Sandbox write paths must be repository-relative and traversal-free.');
+    }
+    const segments = normalized.split('/');
+    const literal = [];
+    for (const segment of segments) {
+      if (/[*?{}()[\]]/.test(segment)) break;
+      literal.push(segment);
+    }
+    let candidate = path.resolve(cwd, literal.join('/'));
+    while (!fs.existsSync(candidate) && candidate !== path.resolve(cwd)) candidate = path.dirname(candidate);
+    if (!candidate.startsWith(path.resolve(cwd) + path.sep) && candidate !== path.resolve(cwd)) {
+      throw new Error('Sandbox write path resolved outside the workspace.');
+    }
+    roots.add(candidate);
+  }
+  return [...roots].sort((a, b) => a.length - b.length);
+}
+
+export function prepareSandboxedCommand(spec, cwd, repoRoot = process.cwd(), allowedWritePaths = ['*']) {
   const policy = getExecutionPolicy(repoRoot);
   if (policy.sandbox_mode === 'process') {
     return { argv: spec.argv, sandbox: 'process', warning: spec.network ? 'Network access was declared but is not isolated in process sandbox mode.' : 'Process sandbox sanitizes environment and limits time/output; OS filesystem and network isolation are not active.' };
@@ -149,14 +177,19 @@ export function prepareSandboxedCommand(spec, cwd, repoRoot = process.cwd()) {
     if (policy.sandbox_mode === 'required') throw Object.assign(new Error('Bubblewrap sandbox is required by policy but unavailable on this host.'), { code: 'SANDBOX_UNAVAILABLE', phase: 'SANDBOX_UNAVAILABLE' });
     return { argv: spec.argv, sandbox: 'process', warning: 'Bubblewrap unavailable; using hardened process mode.' };
   }
-  const argv = ['bwrap', '--die-with-parent', '--new-session', '--ro-bind', '/', '/', '--bind', cwd, cwd, '--chdir', cwd, '--tmpfs', '/tmp'];
+  const writeRoots = bubblewrapWriteRoots(cwd, spec.write_paths?.length ? spec.write_paths : allowedWritePaths);
+  const argv = ['bwrap', '--die-with-parent', '--new-session', '--ro-bind', '/', '/', '--ro-bind', cwd, cwd];
+  for (const writeRoot of writeRoots) argv.push('--bind', writeRoot, writeRoot);
+  argv.push('--chdir', cwd);
+  const resolvedCwd = path.resolve(cwd);
+  if (resolvedCwd !== '/tmp' && !resolvedCwd.startsWith('/tmp/')) argv.push('--tmpfs', '/tmp');
   for (const protectedName of ['.git', '.vibesync']) {
     const protectedPath = path.join(cwd, protectedName);
     if (fs.existsSync(protectedPath)) argv.push('--ro-bind', protectedPath, protectedPath);
   }
   if (!spec.network) argv.push('--unshare-net');
   argv.push('--', ...spec.argv);
-  return { argv, sandbox: spec.network ? 'bubblewrap-networked' : 'bubblewrap-no-network', warning: null };
+  return { argv, sandbox: spec.network ? 'bubblewrap-networked' : 'bubblewrap-no-network', writeRoots, warning: null };
 }
 
 export function requireCommandApproval(spec, db, repoRoot = process.cwd()) {

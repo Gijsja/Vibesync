@@ -432,6 +432,7 @@ export function verifyAndSettleTask(params, maybeDb, maybeRepoRoot) {
     taskId: task.id,
     actorName,
     repoRoot,
+    allowedPaths: task.allowed_paths,
     phase: 'gate'
   });
 
@@ -455,8 +456,9 @@ export function verifyAndSettleTask(params, maybeDb, maybeRepoRoot) {
 
     return {
       success: false,
-      phase: 'GATE_FAILURE',
+      phase: gatesRes.failedGate?.code === 'WRITE_SCOPE_VIOLATION' ? 'WRITE_SCOPE_VIOLATION' : 'GATE_FAILURE',
       error: errorDetails,
+      violations: gatesRes.failedGate?.writeScope?.violations,
       failedGate: gatesRes.failedGate,
       gatesRun: gatesRes.gatesRun,
       status: failInfo.status,

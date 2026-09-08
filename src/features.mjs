@@ -11,6 +11,7 @@ import { FEATURE_STATUSES, PRIORITY_LEVELS } from './config.mjs';
 import { runCommand } from './commands.mjs';
 import { randomUUID } from 'node:crypto';
 import { resolveCommandSpec, requireCommandApproval, prepareSandboxedCommand, identifyModelProfile, getExecutionPolicy } from './policy.mjs';
+import { captureWorkspaceState, validateWorkspaceWriteDelta } from './guard.mjs';
 
 /**
  * Validates feature identifier syntax.
@@ -261,11 +262,19 @@ export function settleFeature(params, db = getDb(), repoRoot = process.cwd()) {
   if (feature.holistic_gate_cmd && (typeof feature.holistic_gate_cmd !== 'string' || feature.holistic_gate_cmd.trim() !== '')) {
     const spec = resolveCommandSpec(feature.holistic_gate_cmd, { cwd: repoRoot, phase: 'feature' });
     const approval = requireCommandApproval(spec, db, repoRoot);
-    const sandbox = prepareSandboxedCommand(spec, repoRoot, repoRoot);
+    const sandbox = prepareSandboxedCommand(spec, repoRoot, repoRoot, ['*']);
+    const beforeState = captureWorkspaceState(repoRoot);
     const started = Date.now();
     const proc = runCommand(sandbox.argv, { cwd: repoRoot, timeoutMs: spec.timeout_ms || 300000, redactLogs: getExecutionPolicy(repoRoot).redact_logs !== false });
     const durationMs = Date.now() - started;
-    const runArtifact = proc.success ? null : saveArtifact(JSON.stringify({ stdout: proc.stdout, stderr: proc.stderr, diagnostics: proc.diagnostics }, null, 2), repoRoot);
+    const writeScope = validateWorkspaceWriteDelta(beforeState, captureWorkspaceState(repoRoot), ['*'], spec.write_paths);
+    if (!writeScope.valid) {
+      proc.success = false;
+      proc.exitCode = proc.exitCode || 1;
+      proc.error = writeScope.error;
+      proc.summary = writeScope.error;
+    }
+    const runArtifact = proc.success ? null : saveArtifact(JSON.stringify({ stdout: proc.stdout, stderr: proc.stderr, diagnostics: proc.diagnostics, writeScope }, null, 2), repoRoot);
     db.prepare(`INSERT INTO gate_runs (id, feature_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash)
       VALUES (?, ?, 'feature', 0, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(randomUUID(), featureId, spec.policyHash, actorName, identifyModelProfile(actorName).id, proc.success ? 'passed' : 'failed', proc.exitCode, durationMs, proc.summary || null, runArtifact);

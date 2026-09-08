@@ -7,7 +7,7 @@
 
 import { getDb, recordSettlementEvent, saveArtifact } from './db.mjs';
 import { getTask } from './tasks.mjs';
-import { checkScopeBoundary } from './guard.mjs';
+import { checkScopeBoundary, captureWorkspaceState, validateWorkspaceWriteDelta } from './guard.mjs';
 import { execGitWithBackoff } from './incubator.mjs';
 import { MAX_FAILURES } from './config.mjs';
 import { runCommand } from './commands.mjs';
@@ -108,10 +108,16 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
       return { success: false, pass: false, gatesRun, failedGate, errorPayload: { cmd: failedGate.cmd, exitCode: 1, failure: error.message, error: error.message, code: error.code } };
     }
     let sandbox;
-    try { sandbox = prepareSandboxedCommand(spec, cwd, opts.repoRoot || cwd); }
+    try { sandbox = prepareSandboxedCommand(spec, cwd, opts.repoRoot || cwd, opts.allowedPaths || ['*']); }
     catch (error) {
       const failedGate = { cmd: spec.display, argv: spec.argv, exitCode: 1, summary: error.message, error: error.message, code: error.code, policyHash: spec.policyHash };
       return { success: false, pass: false, gatesRun, failedGate, errorPayload: { cmd: failedGate.cmd, exitCode: 1, failure: error.message, error: error.message, code: error.code } };
+    }
+    let beforeState;
+    try { beforeState = captureWorkspaceState(cwd); }
+    catch (error) {
+      const failedGate = { cmd: spec.display, argv: spec.argv, exitCode: 1, summary: error.message, error: error.message, code: 'WRITE_SCOPE_SNAPSHOT_FAILED', policyHash: spec.policyHash };
+      return { success: false, pass: false, gatesRun, failedGate, errorPayload: { cmd: failedGate.cmd, exitCode: 1, failure: error.message, error: error.message, code: failedGate.code } };
     }
     const started = Date.now();
     const modelProfile = identifyModelProfile(opts.actorName);
@@ -119,9 +125,23 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
     const res = runGateCommand(sandbox.argv, cwd, { ...opts, maxBuffer: Math.min(opts.maxBuffer || resourceMaxBuffer, resourceMaxBuffer),
       timeoutMs: spec.timeout_ms || opts.timeoutMs || opts.timeout, redactLogs: getExecutionPolicy(opts.repoRoot || cwd).redact_logs !== false });
     const durationMs = Date.now() - started;
+    let writeScope;
+    try {
+      writeScope = validateWorkspaceWriteDelta(beforeState, captureWorkspaceState(cwd), opts.allowedPaths || ['*'], spec.write_paths);
+    } catch (error) {
+      writeScope = { valid: false, writes: [], violations: [], error: `Unable to verify gate write scope: ${error.message}` };
+    }
+    if (!writeScope.valid) {
+      res.success = false;
+      res.exitCode = res.exitCode || 1;
+      res.error = writeScope.error;
+      res.summary = writeScope.error;
+      res.code = 'WRITE_SCOPE_VIOLATION';
+      res.writeScope = writeScope;
+    }
     let artifactHash = null;
     if (opts.db && opts.taskId) {
-      if (!res.success) artifactHash = saveArtifact(JSON.stringify({ stdout: res.stdout, stderr: res.stderr, diagnostics: res.diagnostics }, null, 2), opts.repoRoot || cwd);
+      if (!res.success) artifactHash = saveArtifact(JSON.stringify({ stdout: res.stdout, stderr: res.stderr, diagnostics: res.diagnostics, writeScope }, null, 2), opts.repoRoot || cwd);
       opts.db.prepare(`INSERT INTO gate_runs (id, task_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(randomUUID(), opts.taskId, opts.phase || 'gate', gateIndex, spec.policyHash, opts.actorName || 'unknown', modelProfile.id,
@@ -132,7 +152,7 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
     }
     if (!res.success) {
       const failedGate = { cmd: res.cmd, argv: res.argv, exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr,
-        summary: res.summary, diagnostics: res.diagnostics, error: res.error, policyHash: spec.policyHash, artifactHash };
+        summary: res.summary, diagnostics: res.diagnostics, error: res.error, code: res.code, writeScope: res.writeScope, policyHash: spec.policyHash, artifactHash };
       return {
         success: false,
         pass: false,
@@ -147,7 +167,8 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
       };
     }
     gatesRun.push({ cmd: gate, argv: spec.argv, policyHash: spec.policyHash, approval: approval.approved ? 'approved' : approval.mode,
-      sandbox: sandbox.sandbox, warning: approval.warning || sandbox.warning, exitCode: 0, status: 'PASS', durationMs, diagnostics: res.diagnostics, stdout: res.stdout, stderr: res.stderr });
+      sandbox: sandbox.sandbox, warning: approval.warning || sandbox.warning, exitCode: 0, status: 'PASS', durationMs,
+      writes: writeScope.writes, declaredWritePaths: writeScope.declaredWritePaths, diagnostics: res.diagnostics, stdout: res.stdout, stderr: res.stderr });
   }
 
   return {
@@ -358,7 +379,7 @@ export function executeRequiredGates(taskIdOrGates, gatesOrCwd, cwdOrOptions, ma
     return {
       success: false,
       pass: false,
-      phase: 'GATE_FAILURE',
+      phase: res.failedGate?.code === 'WRITE_SCOPE_VIOLATION' ? 'WRITE_SCOPE_VIOLATION' : 'GATE_FAILURE',
       failedGate: res.failedGate,
       gatesRun: res.gatesRun,
       error: errorDetails,
@@ -459,6 +480,7 @@ export function executeGatekeeper(params, db = getDb()) {
     taskId,
     actorName,
     repoRoot,
+    allowedPaths: task.allowed_paths,
     phase: 'gate'
   });
 
@@ -482,8 +504,9 @@ export function executeGatekeeper(params, db = getDb()) {
 
     return {
       success: false,
-      phase: 'GATE_FAILURE',
+      phase: gatesResult.failedGate?.code === 'WRITE_SCOPE_VIOLATION' ? 'WRITE_SCOPE_VIOLATION' : 'GATE_FAILURE',
       error: errorDetails,
+      violations: gatesResult.failedGate?.writeScope?.violations,
       failedGate: gatesResult.failedGate,
       status: failInfo.status,
       failures: failInfo.consecutive_failures,

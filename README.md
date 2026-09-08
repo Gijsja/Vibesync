@@ -101,6 +101,13 @@ sensitive inherited environment variables and enforces time/output limits but is
 not an OS security boundary. Auto/required use Bubblewrap when the host supports
 it; required mode refuses execution when containment is unavailable.
 
+Structured commands may declare `write_paths`. VibeSync fingerprints the workspace
+around each gate and rejects persistent writes outside both those paths and the
+task's `allowed_paths`. Omit `write_paths` to inherit the task boundary. This
+detects tracked and non-ignored writes; required Bubblewrap is the boundary for
+transient or ignored-path activity and mounts only the declared write roots as
+writable.
+
 ## A few useful boundaries
 
 VibeSync is a **trusted local development tool**. The default process sandbox is

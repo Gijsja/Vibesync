@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { withSandbox } from './harness.mjs';
 import { getDb } from '../src/db.mjs';
-import { createFeature } from '../src/features.mjs';
+import { createFeature, settleFeature } from '../src/features.mjs';
 import { createTask, claimTask, heartbeatTaskLease } from '../src/tasks.mjs';
 import { executeGates } from '../src/gatekeeper.mjs';
 import { verifyAndSettleTask } from '../src/settle.mjs';
@@ -49,6 +49,86 @@ test('enforced approvals are hash-bound and unsafe commands consume one approval
     assert.equal(db.prepare('SELECT model_profile FROM gate_runs WHERE task_id = ?').get('TASK-APPROVE').model_profile, 'codex');
     assert.ok(db.prepare('SELECT revoked_at FROM gate_approvals WHERE policy_hash = ?').get(approved.policyHash).revoked_at);
     assert.equal(executeGates([gate], { cwd: sandbox.dir, db, taskId: 'TASK-APPROVE', actorName: 'openai-codex', repoRoot: sandbox.dir }).failedGate.code, 'APPROVAL_REQUIRED');
+  });
+});
+
+test('gate writes are attributed per command and constrained by task and declared scopes', async () => {
+  await withSandbox(async sandbox => {
+    const db = sandbox.registerDb(getDb(path.join(sandbox.dir, '.vibesync/state.db'), sandbox.dir));
+    createFeature({ id: 'FEAT-WRITES', title: 'Writes', target_milestone: 'v1', spec_markdown: 'Scoped writes' }, db);
+    createTask({ id: 'TASK-WRITES', feature_id: 'FEAT-WRITES', title: 'Scoped gate', allowed_paths: ['src/**'] }, db);
+    fs.mkdirSync(path.join(sandbox.dir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(sandbox.dir, 'src/existing.txt'), 'before');
+    const gate = { type: 'argv', argv: ['node', '-e', "require('fs').writeFileSync('src/existing.txt','after')"], write_paths: ['src/generated/**'] };
+    const result = executeGates([gate], { cwd: sandbox.dir, db, taskId: 'TASK-WRITES', actorName: 'openai-codex', repoRoot: sandbox.dir,
+      allowedPaths: ['src/**'] });
+    assert.equal(result.success, false);
+    assert.equal(result.failedGate.code, 'WRITE_SCOPE_VIOLATION');
+    assert.deepEqual(result.failedGate.writeScope.violations, ['src/existing.txt']);
+  });
+});
+
+test('declared gate writes pass when they remain inside the task boundary', async () => {
+  await withSandbox(async sandbox => {
+    const db = sandbox.registerDb(getDb(path.join(sandbox.dir, '.vibesync/state.db'), sandbox.dir));
+    createFeature({ id: 'FEAT-WRITE-OK', title: 'Writes', target_milestone: 'v1', spec_markdown: 'Scoped writes' }, db);
+    createTask({ id: 'TASK-WRITE-OK', feature_id: 'FEAT-WRITE-OK', title: 'Scoped gate', allowed_paths: ['generated/**'] }, db);
+    const gate = { type: 'argv', argv: ['node', '-e', "require('fs').mkdirSync('generated',{recursive:true});require('fs').writeFileSync('generated/report.txt','ok')"], write_paths: ['generated/**'] };
+    const result = executeGates([gate], { cwd: sandbox.dir, db, taskId: 'TASK-WRITE-OK', actorName: 'local-qwen', repoRoot: sandbox.dir,
+      allowedPaths: ['generated/**'] });
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.deepEqual(result.gatesRun[0].writes, ['generated/report.txt']);
+  });
+});
+
+test('settlement reports gate write violations as a distinct failure phase', async () => {
+  await withSandbox(async sandbox => {
+    const db = sandbox.registerDb(getDb(path.join(sandbox.dir, '.vibesync/state.db'), sandbox.dir));
+    createFeature({ id: 'FEAT-WRITE-PHASE', title: 'Write phase', target_milestone: 'v1', spec_markdown: 'Scoped writes' }, db);
+    const gate = { type: 'argv', argv: ['node', '-e', "require('fs').writeFileSync('report.txt','x')"], write_paths: ['generated/**'] };
+    createTask({ id: 'TASK-WRITE-PHASE', feature_id: 'FEAT-WRITE-PHASE', title: 'Write phase', allowed_paths: ['*'], required_gates: [gate] }, db);
+    const claim = claimTask({ taskId: 'TASK-WRITE-PHASE', actorName: 'openai-codex' }, db, sandbox.dir);
+    sandbox.createBranch(claim.task.branch_name, 'main', true);
+    sandbox.checkout('main');
+    const result = verifyAndSettleTask({ taskId: 'TASK-WRITE-PHASE', actorName: 'openai-codex', repoRoot: sandbox.dir, db });
+    assert.equal(result.phase, 'WRITE_SCOPE_VIOLATION');
+    assert.deepEqual(result.violations, ['report.txt']);
+  });
+});
+
+test('write declarations reject absolute and traversal paths', () => {
+  assert.throws(() => resolveCommandSpec({ type: 'argv', argv: ['node', '--version'], write_paths: ['../outside'] }), /repository-relative/);
+  assert.throws(() => resolveCommandSpec({ type: 'argv', argv: ['node', '--version'], write_paths: ['/tmp/out'] }), /repository-relative/);
+});
+
+test('holistic feature gates enforce their declared write scope', async () => {
+  await withSandbox(async sandbox => {
+    const db = sandbox.registerDb(getDb(path.join(sandbox.dir, '.vibesync/state.db'), sandbox.dir));
+    createFeature({ id: 'FEAT-HOLISTIC-WRITE', title: 'Holistic writes', target_milestone: 'v1', spec_markdown: 'Scoped feature gate',
+      holistic_gate_cmd: { type: 'argv', argv: ['node', '-e', "require('fs').writeFileSync('outside.txt','x')"], write_paths: ['reports/**'] } }, db);
+    assert.throws(() => settleFeature({ featureId: 'FEAT-HOLISTIC-WRITE', actorName: 'anthropic-claude' }, db, sandbox.dir), /Gate Write Scope Violation/);
+    assert.equal(db.prepare('SELECT status FROM gate_runs WHERE feature_id = ?').get('FEAT-HOLISTIC-WRITE').status, 'failed');
+  });
+});
+
+test('required Bubblewrap mounts only derived gate write roots', async t => {
+  await withSandbox(async sandbox => {
+    const db = sandbox.registerDb(getDb(path.join(sandbox.dir, '.vibesync/state.db'), sandbox.dir));
+    fs.writeFileSync(path.join(sandbox.dir, '.vibesync/policy.json'), JSON.stringify({ sandbox_mode: 'required' }));
+    fs.mkdirSync(path.join(sandbox.dir, 'allowed'), { recursive: true });
+    const gates = [
+      { type: 'argv', argv: ['node', '-e', "require('fs').writeFileSync('allowed/ok.txt','ok')"], write_paths: ['allowed/**'] },
+      { type: 'argv', argv: ['node', '-e', "require('fs').writeFileSync('outside.txt','blocked')"], write_paths: ['allowed/**'] }
+    ];
+    const result = executeGates(gates, { cwd: sandbox.dir, db, actorName: 'local-qwen', repoRoot: sandbox.dir, allowedPaths: ['*'] });
+    if (result.failedGate?.code === 'SANDBOX_UNAVAILABLE') {
+      t.skip('Bubblewrap is unavailable on this host.');
+      return;
+    }
+    assert.equal(result.success, false);
+    assert.equal(result.gatesRun[0].sandbox, 'bubblewrap-no-network');
+    assert.equal(fs.readFileSync(path.join(sandbox.dir, 'allowed/ok.txt'), 'utf8'), 'ok');
+    assert.equal(fs.existsSync(path.join(sandbox.dir, 'outside.txt')), false);
   });
 });
 

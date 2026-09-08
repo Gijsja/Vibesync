@@ -57,7 +57,8 @@ export function startTask({ taskId, actorName = 'human' }, db, repoRoot) {
     const scopedTask = getTask(taskId, db);
     const preCommitHookPath = installScopeHook(worktreePath, scopedTask.allowed_paths);
     if ((scopedTask.setup || []).length) {
-      const setupResult = executeGates(scopedTask.setup, { cwd: worktreePath, db, taskId, actorName, repoRoot, phase: 'setup' });
+      const setupResult = executeGates(scopedTask.setup, { cwd: worktreePath, db, taskId, actorName, repoRoot,
+        allowedPaths: scopedTask.allowed_paths, phase: 'setup' });
       if (!setupResult.success) {
         const error = new Error(`Worktree setup failed: ${setupResult.failedGate?.summary || setupResult.failedGate?.error || 'unknown error'}`);
         error.code = setupResult.failedGate?.code || 'SETUP_FAILED';

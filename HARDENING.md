@@ -32,6 +32,11 @@ unauthenticated local HTTP API.
 - Task setup, verification gates, and holistic feature gates share structured
   command resolution, hash-bound approvals, sanitized inherited environments,
   redacted logs, diagnostics, runtime records, and optional Bubblewrap isolation.
+- Verification gates snapshot persistent tracked and non-ignored workspace state
+  before and after every command. Writes must remain inside both the task scope
+  and the command's optional narrower `write_paths`; Git history mutation is
+  always rejected. Bubblewrap mounts the workspace read-only and overlays only
+  the declared write roots, containing ignored or transient writes as well.
 - Approval hashes include resolved npm script content, so editing a package script
   invalidates its prior approval. Non-idempotent commands consume their approval.
 - Gemini, Claude, Codex, and local-model profiles affect suitability, heartbeat

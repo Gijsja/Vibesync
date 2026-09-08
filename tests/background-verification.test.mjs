@@ -47,7 +47,7 @@ test('gate-created out-of-scope files block settlement', async () => {
     const { completion } = beginOperation('task', 'TASK-SCOPE', 'human', db, sandbox.dir);
     const result = await completion;
     assert.equal(result.success, false);
-    assert.equal(result.phase, 'SCOPE_VIOLATION');
+    assert.equal(result.phase, 'WRITE_SCOPE_VIOLATION');
     assert.equal(getTask('TASK-SCOPE', db).status, 'in_progress');
     assert.equal(listOperations(db)[0].status, 'failed');
     assert.equal(fs.existsSync(path.join(sandbox.dir, 'outside.txt')), false);
