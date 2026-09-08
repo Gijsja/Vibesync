@@ -145,8 +145,13 @@ export function createMcpServer(options = {}) {
       },
       {
         name: 'vibesync_heartbeat_task',
-        description: description('Renew an owned task lease with optional progress evidence.', 'A working agent remains active, including slower local models.', 'Do not use another actor’s token or revive an expired lease outside its grace window.', 'Extends the lease only when actor and opaque lease token still match.'), annotations: annotations(false, false, true),
-        inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, actor_name: { type: 'string' }, lease_token: { type: 'string' }, progress_fingerprint: { type: 'string' } }, required: ['task_id', 'actor_name', 'lease_token'] }
+        description: description('Renew an owned task lease. Server computes workspace progress evidence server-side.', 'A working agent remains active, including slower local models.', 'Do not use another actor\'s token or revive an expired lease outside its grace window.', 'Extends the lease when actor and opaque lease token still match; returns structured lease_health (active/stagnant/warning/grace) and actionable guidance. Throws LEASE_EXPIRED when stagnation limit is exhausted.'), annotations: annotations(false, false, true),
+        inputSchema: { type: 'object', properties: {
+          task_id: { type: 'string' },
+          actor_name: { type: 'string' },
+          lease_token: { type: 'string' },
+          worktree_path: { type: 'string', description: 'Optional: path to the task worktree. Server validates it matches the registered path before computing evidence.' }
+        }, required: ['task_id', 'actor_name', 'lease_token'] }
       },
       {
         name: 'vibesync_verify_and_settle',
@@ -356,7 +361,7 @@ export function createMcpServer(options = {}) {
       }
 
       if (name === 'vibesync_heartbeat_task') {
-        const result = heartbeatTaskLease({ taskId: args.task_id, actorName: args.actor_name, leaseToken: args.lease_token, progressFingerprint: args.progress_fingerprint }, db);
+        const result = heartbeatTaskLease({ taskId: args.task_id, actorName: args.actor_name, leaseToken: args.lease_token, worktreePath: args.worktree_path, repoRoot }, db);
         if (onUpdate) onUpdate();
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }

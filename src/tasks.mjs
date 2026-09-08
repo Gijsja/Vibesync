@@ -8,11 +8,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { getDb, recordSettlementEvent, checkpointState } from './db.mjs';
 import { getFeature } from './features.mjs';
 import { execGitWithBackoff } from './incubator.mjs';
 import { TASK_STATUSES, PRIORITY_LEVELS } from './config.mjs';
 import { identifyModelProfile } from './policy.mjs';
+import { computeWorkspaceFingerprint } from './fingerprint.mjs';
 
 /**
  * Validates task identifier syntax.
@@ -386,6 +388,7 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
   const modelProfile = identifyModelProfile(actorName);
   const leaseToken = crypto.randomUUID();
   const leaseTokenHash = crypto.createHash('sha256').update(leaseToken).digest('hex');
+  const leaseRunId = randomUUID();
   let baseCommit = '0000000';
   try {
     baseCommit = execGitWithBackoff(['rev-parse', '--short', 'HEAD'], { cwd: repoRoot });
@@ -404,12 +407,18 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
         lease_token_hash = ?,
         last_heartbeat_at = CURRENT_TIMESTAMP,
         progress_fingerprint = NULL,
+        last_progress_at = NULL,
+        stagnant_heartbeat_count = 0,
+        lease_warning_at = NULL,
+        lease_grace_at = NULL,
+        handoff_requested_at = NULL,
+        lease_run_id = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
       AND (status != 'in_progress' OR datetime(lease_expires_at) <= datetime('now'))
       AND status != 'settled'
       AND (status != 'blocked' OR ? = 'human')
-  `).run(actorName, actorName, branchName, baseCommit, `+${modelProfile.leaseMinutes} minutes`, leaseTokenHash, taskId, actorName);
+  `).run(actorName, actorName, branchName, baseCommit, `+${modelProfile.leaseMinutes} minutes`, leaseTokenHash, leaseRunId, taskId, actorName);
 
   if (updateRes.changes === 0) {
     throw new Error(`Task ${taskId} is currently in_progress (concurrently claimed).`);
@@ -435,6 +444,7 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
       branch_name: branchName,
       lease_expires_at: updatedTask.lease_expires_at,
       lease_generation: updatedTask.lease_generation,
+      lease_run_id: leaseRunId,
       model_profile: modelProfile.id
     }
   });
@@ -444,40 +454,203 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
     activeTaskAnchorPath,
     task: updatedTask,
     leaseToken,
+    leaseRunId,
     heartbeatMinutes: modelProfile.heartbeatMinutes,
     modelProfile: modelProfile.id
   };
 }
 
-/** Renew a lease only for its current owner and unguessable lease generation token. */
+/**
+ * Computes the structured lease health from a stagnant beat count and model profile.
+ *
+ * @param {number} stagnantCount
+ * @param {object} profile
+ * @returns {'active'|'stagnant'|'warning'|'grace'|'expired'}
+ */
+function leaseHealthFromCount(stagnantCount, profile) {
+  if (stagnantCount === 0) return 'active';
+  const warnAt = profile.stagnantWarningBeats ?? 2;
+  const graceAt = warnAt + (profile.stagnantGraceBeats ?? 2);
+  const expiryAt = graceAt + (profile.stagnantExpiryBeats ?? 2);
+  if (stagnantCount < warnAt) return 'stagnant';
+  if (stagnantCount < graceAt) return 'warning';
+  if (stagnantCount < expiryAt) return 'grace';
+  return 'expired';
+}
+
+/**
+ * Renews a lease only when actor, opaque token, and the two-minute late-grace window
+ * still match.  Progress is determined server-side from the actual worktree state —
+ * any caller-supplied fingerprint hint is ignored.
+ *
+ * @param {object} params
+ * @param {string} params.taskId
+ * @param {string} params.actorName
+ * @param {string} params.leaseToken - Opaque UUID issued at claim time
+ * @param {string} [params.worktreePath] - Optional path hint; server validates it matches the task
+ * @param {string} [params.repoRoot]
+ * @returns {{ success: boolean, leaseHealth: string, task: object, heartbeatMinutes: number, modelProfile: string,
+ *             fingerprintChanged: boolean, stagnantHeartbeatCount: number, guidance: string }}
+ */
 export function heartbeatTaskLease(params, db = getDb()) {
-  const { taskId, actorName, leaseToken, progressFingerprint = null } = params;
-  if (!taskId || !actorName || !leaseToken) throw new Error('taskId, actorName, and leaseToken are required.');
+  const { taskId, actorName, leaseToken, repoRoot = process.cwd() } = params;
+  if (!taskId || !actorName || !leaseToken) {
+    throw new Error('taskId, actorName, and leaseToken are required.');
+  }
+
   const tokenHash = crypto.createHash('sha256').update(leaseToken).digest('hex');
   const profile = identifyModelProfile(actorName);
-  const result = db.prepare(`
+
+  // Verify current ownership and fetch stagnation state atomically via read.
+  const current = db.prepare(
+    `SELECT id, status, assigned_actor, lease_token_hash, lease_expires_at, lease_run_id,
+            progress_fingerprint, stagnant_heartbeat_count, worktree_path, feature_id
+     FROM tasks WHERE id = ?`
+  ).get(taskId);
+
+  if (!current) throw Object.assign(new Error(`Task ${taskId} not found.`), { code: 'LEASE_STALE' });
+  if (current.status !== 'in_progress') throw Object.assign(new Error(`Lease heartbeat rejected: task ${taskId} is not in_progress.`), { code: 'LEASE_STALE' });
+  if (current.assigned_actor !== actorName) throw Object.assign(new Error('Lease heartbeat rejected: actor mismatch.'), { code: 'LEASE_STALE' });
+  if (current.lease_token_hash !== tokenHash) throw Object.assign(new Error('Lease heartbeat rejected: token mismatch.'), { code: 'LEASE_STALE' });
+
+  // Validate supplied worktreePath hint — must match the registered path when provided.
+  const registeredWorktree = current.worktree_path || null;
+  const worktreePath = params.worktreePath
+    ? (params.worktreePath === registeredWorktree ? params.worktreePath : null)
+    : registeredWorktree;
+
+  // Compute server-side fingerprint.  Caller-supplied fingerprint hints are rejected.
+  const newFingerprint = computeWorkspaceFingerprint(worktreePath, repoRoot, db, taskId);
+  const prevFingerprint = current.progress_fingerprint;
+  const fingerprintChanged = prevFingerprint === null || prevFingerprint !== newFingerprint;
+
+  const prevStagnant = current.stagnant_heartbeat_count ?? 0;
+  const newStagnantCount = fingerprintChanged ? 0 : prevStagnant + 1;
+  const leaseHealth = leaseHealthFromCount(newStagnantCount, profile);
+
+  // Determine event action and guidance message.
+  let auditAction;
+  let guidance;
+  if (fingerprintChanged) {
+    auditAction = 'lease_progress';
+    guidance = 'Progress detected. Lease renewed.';
+  } else if (leaseHealth === 'stagnant') {
+    auditAction = 'lease_stagnant';
+    guidance = `No workspace change detected (${newStagnantCount} unchanged beat(s)). Lease renewed. Commit or stage work to signal progress.`;
+  } else if (leaseHealth === 'warning') {
+    auditAction = 'lease_warning';
+    guidance = `Repeated stagnation (${newStagnantCount} beats). Warning issued. Make measurable progress before the grace limit is reached.`;
+  } else if (leaseHealth === 'grace') {
+    auditAction = 'lease_grace';
+    guidance = `Grace period active (${newStagnantCount} stagnant beats). Lease renewed. One more unchanged beat will expire the lease.`;
+  } else {
+    // expired — atomically release the lease rather than renewing it.
+    const expireResult = db.prepare(`
+      UPDATE tasks
+      SET status = 'ready',
+          assigned_actor = NULL,
+          lease_expires_at = NULL,
+          lease_token_hash = NULL,
+          last_heartbeat_at = CURRENT_TIMESTAMP,
+          progress_fingerprint = NULL,
+          stagnant_heartbeat_count = 0,
+          lease_warning_at = NULL,
+          lease_grace_at = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status = 'in_progress' AND assigned_actor = ? AND lease_token_hash = ?
+    `).run(taskId, actorName, tokenHash);
+
+    if (expireResult.changes > 0) {
+      recordSettlementEvent(db, {
+        task_id: taskId,
+        feature_id: current.feature_id,
+        actor: 'system',
+        action: 'lease_expired',
+        commit_ref: 'HEAD',
+        evidence_payload: {
+          previous_actor: actorName,
+          stagnant_heartbeat_count: newStagnantCount,
+          lease_run_id: current.lease_run_id
+        }
+      });
+      checkpointState(db);
+    }
+    throw Object.assign(
+      new Error('Lease heartbeat rejected: stagnation limit exceeded. Lease has been released.'),
+      { code: 'LEASE_EXPIRED', leaseHealth: 'expired' }
+    );
+  }
+
+  // Build SQL UPDATE for non-expiry states.
+  const now = new Date().toISOString();
+  const setWarningAt = leaseHealth === 'warning' ? `CASE WHEN lease_warning_at IS NULL THEN CURRENT_TIMESTAMP ELSE lease_warning_at END` : `NULL`;
+  const setGraceAt   = leaseHealth === 'grace'   ? `CASE WHEN lease_grace_at IS NULL THEN CURRENT_TIMESTAMP ELSE lease_grace_at END` : `NULL`;
+
+  const updateResult = db.prepare(`
     UPDATE tasks
     SET lease_expires_at = datetime('now', ?),
         last_heartbeat_at = CURRENT_TIMESTAMP,
-        progress_fingerprint = COALESCE(?, progress_fingerprint),
+        progress_fingerprint = ?,
+        last_progress_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE last_progress_at END,
+        stagnant_heartbeat_count = ?,
+        lease_warning_at = ${setWarningAt},
+        lease_grace_at = ${setGraceAt},
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ? AND status = 'in_progress' AND assigned_actor = ? AND lease_token_hash = ?
       AND datetime(lease_expires_at) > datetime('now', '-2 minutes')
-  `).run(`+${profile.leaseMinutes} minutes`, progressFingerprint, taskId, actorName, tokenHash);
-  if (!result.changes) throw Object.assign(new Error('Lease heartbeat rejected: ownership, token, or grace window no longer matches.'), { code: 'LEASE_STALE' });
+  `).run(
+    `+${profile.leaseMinutes} minutes`,
+    newFingerprint,
+    fingerprintChanged ? 1 : 0,
+    newStagnantCount,
+    taskId, actorName, tokenHash
+  );
+
+  if (!updateResult.changes) {
+    throw Object.assign(
+      new Error('Lease heartbeat rejected: ownership, token, or grace window no longer matches.'),
+      { code: 'LEASE_STALE' }
+    );
+  }
+
+  // Record the audit event (no raw lease token recorded).
+  recordSettlementEvent(db, {
+    task_id: taskId,
+    feature_id: current.feature_id,
+    actor: actorName,
+    action: auditAction,
+    commit_ref: 'HEAD',
+    evidence_payload: {
+      lease_run_id: current.lease_run_id,
+      fingerprint_changed: fingerprintChanged,
+      stagnant_heartbeat_count: newStagnantCount,
+      lease_health: leaseHealth
+    }
+  });
+
   checkpointState(db);
-  return { success: true, task: getTask(taskId, db), heartbeatMinutes: profile.heartbeatMinutes, modelProfile: profile.id };
+  return {
+    success: true,
+    leaseHealth,
+    fingerprintChanged,
+    stagnantHeartbeatCount: newStagnantCount,
+    guidance,
+    task: getTask(taskId, db),
+    heartbeatMinutes: profile.heartbeatMinutes,
+    modelProfile: profile.id
+  };
 }
 
 /**
  * Releases a task lease back to 'ready'.
  * 
- * @param {string} taskId 
- * @param {DatabaseSync} [db] 
+ * @param {string} taskId
+ * @param {DatabaseSync} [db]
  */
 export function releaseTaskLease(taskId, db = getDb()) {
   const task = getTask(taskId, db);
   if (!task) throw new Error(`Task ${taskId} not found.`);
+
 
   const result = db.prepare(`
     UPDATE tasks
@@ -487,6 +660,10 @@ export function releaseTaskLease(taskId, db = getDb()) {
         lease_token_hash = NULL,
         last_heartbeat_at = NULL,
         progress_fingerprint = NULL,
+        last_progress_at = NULL,
+        stagnant_heartbeat_count = 0,
+        lease_warning_at = NULL,
+        lease_grace_at = NULL,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ? AND status = 'in_progress'
   `).run(taskId);
@@ -498,34 +675,63 @@ export function releaseTaskLease(taskId, db = getDb()) {
     actor: task.assigned_actor || 'system',
     action: 'lease_released',
     commit_ref: 'HEAD',
-    evidence_payload: { reason: 'manual_release' }
+    evidence_payload: { reason: 'manual_release', lease_run_id: task.lease_run_id || null }
   });
 }
 
 /**
  * Scans for expired leases and unlocks them back to 'ready'.
- * 
- * @param {DatabaseSync} [db] 
+ *
+ * @param {DatabaseSync} [db]
  * @returns {number} Count of expired tasks unlocked
  */
 export function checkAndExpireLeases(db = getDb()) {
-  const expired = db.prepare("SELECT * FROM tasks WHERE status = 'in_progress' AND lease_expires_at IS NOT NULL AND datetime(lease_expires_at) <= datetime('now')").all();
+  const expired = db.prepare(
+    "SELECT * FROM tasks WHERE status = 'in_progress' AND lease_expires_at IS NOT NULL AND datetime(lease_expires_at) <= datetime('now')"
+  ).all();
   let released = 0;
   for (const task of expired) {
-    const result = db.prepare("UPDATE tasks SET status = 'ready', assigned_actor = NULL, lease_expires_at = NULL, lease_token_hash = NULL, last_heartbeat_at = NULL, progress_fingerprint = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'in_progress' AND assigned_actor IS ? AND lease_expires_at IS ? AND datetime(lease_expires_at) <= datetime('now')").run(task.id, task.assigned_actor, task.lease_expires_at);
+    // Atomic conditional UPDATE — preserves existing compare-and-swap protection.
+    const result = db.prepare(`
+      UPDATE tasks
+      SET status = 'ready',
+          assigned_actor = NULL,
+          lease_expires_at = NULL,
+          lease_token_hash = NULL,
+          last_heartbeat_at = NULL,
+          progress_fingerprint = NULL,
+          last_progress_at = NULL,
+          stagnant_heartbeat_count = 0,
+          lease_warning_at = NULL,
+          lease_grace_at = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status = 'in_progress' AND assigned_actor IS ? AND lease_expires_at IS ?
+        AND datetime(lease_expires_at) <= datetime('now')
+    `).run(task.id, task.assigned_actor, task.lease_expires_at);
     if (!result.changes) continue;
     released++;
-    recordSettlementEvent(db, { task_id: task.id, feature_id: task.feature_id, actor: 'system', action: 'lease_released', commit_ref: 'HEAD',
-      evidence_payload: { reason: 'lease_ttl_expired', previous_actor: task.assigned_actor, expired_at: task.lease_expires_at } });
+    recordSettlementEvent(db, {
+      task_id: task.id,
+      feature_id: task.feature_id,
+      actor: 'system',
+      action: 'lease_expired',
+      commit_ref: 'HEAD',
+      evidence_payload: {
+        reason: 'lease_ttl_expired',
+        previous_actor: task.assigned_actor,
+        expired_at: task.lease_expires_at,
+        lease_run_id: task.lease_run_id || null
+      }
+    });
   }
   return released;
 }
 
 /**
  * Reassigns an in-progress or claimed task to human operator.
- * 
- * @param {string} taskId 
- * @param {DatabaseSync} [db] 
+ *
+ * @param {string} taskId
+ * @param {DatabaseSync} [db]
  * @param {string} [repoRoot=process.cwd()]
  * @returns {object} Updated task record
  */
@@ -541,6 +747,10 @@ export function ejectTaskToHuman(taskId, db = getDb(), repoRoot = process.cwd())
         lease_token_hash = NULL,
         last_heartbeat_at = CASE WHEN status = 'in_progress' THEN CURRENT_TIMESTAMP ELSE last_heartbeat_at END,
         progress_fingerprint = NULL,
+        stagnant_heartbeat_count = 0,
+        lease_warning_at = NULL,
+        lease_grace_at = NULL,
+        handoff_requested_at = CASE WHEN status = 'in_progress' THEN CURRENT_TIMESTAMP ELSE handoff_requested_at END,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(taskId);
@@ -550,6 +760,20 @@ export function ejectTaskToHuman(taskId, db = getDb(), repoRoot = process.cwd())
     commitRef = execGitWithBackoff(['rev-parse', '--short', 'HEAD'], { cwd: repoRoot });
   } catch {}
 
+  recordSettlementEvent(db, {
+    task_id: taskId,
+    feature_id: task.feature_id,
+    actor: 'human',
+    action: 'lease_handoff_requested',
+    commit_ref: commitRef,
+    evidence_payload: {
+      previous_actor: task.assigned_actor,
+      ejected_at: new Date().toISOString(),
+      lease_run_id: task.lease_run_id || null
+    }
+  });
+
+  // Also record the legacy ejected_to_human event for backward compatibility.
   recordSettlementEvent(db, {
     task_id: taskId,
     feature_id: task.feature_id,

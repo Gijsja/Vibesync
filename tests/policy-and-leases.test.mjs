@@ -140,9 +140,15 @@ test('lease heartbeats are owner-token bound and adapt cadence for local models'
     const claim = claimTask({ taskId: 'TASK-LEASE', actorName: 'local-ollama-qwen' }, db, sandbox.dir);
     assert.equal(claim.modelProfile, 'local');
     assert.equal(claim.heartbeatMinutes, 3);
-    const beat = heartbeatTaskLease({ taskId: 'TASK-LEASE', actorName: 'local-ollama-qwen', leaseToken: claim.leaseToken, progressFingerprint: 'diff-a' }, db);
-    assert.equal(beat.task.progress_fingerprint, 'diff-a');
-    assert.throws(() => heartbeatTaskLease({ taskId: 'TASK-LEASE', actorName: 'local-ollama-qwen', leaseToken: 'wrong' }, db), /rejected/);
+    assert.ok(claim.leaseRunId, 'claimTask must return a stable leaseRunId');
+    // First beat: fingerprint was NULL → always counts as progress.
+    const beat = heartbeatTaskLease({ taskId: 'TASK-LEASE', actorName: 'local-ollama-qwen', leaseToken: claim.leaseToken, repoRoot: sandbox.dir }, db);
+    assert.equal(beat.success, true);
+    assert.equal(beat.leaseHealth, 'active', 'first beat should always be active (was null before)');
+    assert.ok(typeof beat.task.progress_fingerprint === 'string', 'server-side fingerprint must be a string');
+    assert.ok(beat.fingerprintChanged === true, 'first beat should always show change relative to null');
+    // Wrong token must be rejected.
+    assert.throws(() => heartbeatTaskLease({ taskId: 'TASK-LEASE', actorName: 'local-ollama-qwen', leaseToken: 'wrong', repoRoot: sandbox.dir }, db), /rejected/);
   });
 });
 

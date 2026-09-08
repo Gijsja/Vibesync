@@ -6,11 +6,17 @@ import { normalizeCommand, displayCommand } from './commands.mjs';
 import { checkpointState } from './durability.mjs';
 
 export const MODEL_PROFILES = Object.freeze({
-  gemini: { id: 'gemini', execution: 'hosted', strengths: ['planning', 'large-context'], heartbeatMinutes: 10, leaseMinutes: 45, resourceClass: 'standard' },
-  claude: { id: 'claude', execution: 'hosted', strengths: ['review', 'reasoning'], heartbeatMinutes: 10, leaseMinutes: 45, resourceClass: 'standard' },
-  codex: { id: 'codex', execution: 'hosted', strengths: ['implementation', 'testing'], heartbeatMinutes: 8, leaseMinutes: 45, resourceClass: 'standard' },
-  local: { id: 'local', execution: 'local', strengths: ['private', 'offline', 'low-cost'], heartbeatMinutes: 3, leaseMinutes: 60, resourceClass: 'constrained' },
-  generic: { id: 'generic', execution: 'unknown', strengths: [], heartbeatMinutes: 8, leaseMinutes: 45, resourceClass: 'standard' }
+  // stagnantWarningBeats: unchanged heartbeats before entering "warning" state
+  // stagnantGraceBeats:   additional beats after warning before "grace" state
+  // stagnantExpiryBeats:  additional beats after grace before automatic expiry
+  // Gemini and Claude allow longer reasoning intervals before stagnation is flagged.
+  // Codex uses a shorter implementation-oriented cadence.
+  // Local models send frequent liveness checks but have a longer progress window.
+  gemini: { id: 'gemini', execution: 'hosted', strengths: ['planning', 'large-context'], heartbeatMinutes: 10, leaseMinutes: 45, resourceClass: 'standard', stagnantWarningBeats: 3, stagnantGraceBeats: 2, stagnantExpiryBeats: 2 },
+  claude:  { id: 'claude', execution: 'hosted', strengths: ['review', 'reasoning'], heartbeatMinutes: 10, leaseMinutes: 45, resourceClass: 'standard', stagnantWarningBeats: 3, stagnantGraceBeats: 2, stagnantExpiryBeats: 2 },
+  codex:   { id: 'codex', execution: 'hosted', strengths: ['implementation', 'testing'], heartbeatMinutes: 8, leaseMinutes: 45, resourceClass: 'standard', stagnantWarningBeats: 2, stagnantGraceBeats: 1, stagnantExpiryBeats: 2 },
+  local:   { id: 'local', execution: 'local', strengths: ['private', 'offline', 'low-cost'], heartbeatMinutes: 3, leaseMinutes: 60, resourceClass: 'constrained', stagnantWarningBeats: 4, stagnantGraceBeats: 3, stagnantExpiryBeats: 3 },
+  generic: { id: 'generic', execution: 'unknown', strengths: [], heartbeatMinutes: 8, leaseMinutes: 45, resourceClass: 'standard', stagnantWarningBeats: 2, stagnantGraceBeats: 2, stagnantExpiryBeats: 2 }
 });
 
 export function identifyModelProfile(actorName = '') {

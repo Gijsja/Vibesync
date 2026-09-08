@@ -599,7 +599,7 @@ export async function startServer(options = {}) {
       }
       if (pathname === '/api/tasks/heartbeat' && req.method === 'POST') {
         const body = await readBodyJson(req);
-        const result = heartbeatTaskLease({ taskId: body.taskId, actorName: body.actorName, leaseToken: body.leaseToken, progressFingerprint: body.progressFingerprint }, db);
+        const result = heartbeatTaskLease({ taskId: body.taskId, actorName: body.actorName, leaseToken: body.leaseToken, worktreePath: body.worktreePath, repoRoot }, db);
         broadcastState();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(result));

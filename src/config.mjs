@@ -126,7 +126,15 @@ export const SETTLEMENT_ACTIONS = Object.freeze([
   'feature_settled',
   'lease_released',
   'ejected_to_human',
-  'repaired_from_git'
+  'repaired_from_git',
+  // Phase 1: evidence-based lease-health events
+  'lease_progress',
+  'lease_warning',
+  'lease_stagnant',
+  'lease_grace',
+  'lease_expired',
+  'lease_renewed',
+  'lease_handoff_requested'
 ]);
 
 // Path Resolution Helpers
