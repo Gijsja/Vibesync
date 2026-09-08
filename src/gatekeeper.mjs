@@ -11,6 +11,8 @@ import { checkScopeBoundary } from './guard.mjs';
 import { execGitWithBackoff } from './incubator.mjs';
 import { MAX_FAILURES } from './config.mjs';
 import { runCommand } from './commands.mjs';
+import { randomUUID } from 'node:crypto';
+import { resolveCommandSpec, requireCommandApproval, identifyModelProfile, getExecutionPolicy, prepareSandboxedCommand } from './policy.mjs';
 
 /**
  * Resolves current Git HEAD commit SHA safely.
@@ -51,7 +53,8 @@ export function runGateCommand(cmd, cwdOrOptions = process.cwd(), options = {}) 
   const maxBuffer = opts.maxBuffer || 10 * 1024 * 1024;
   const env = opts.env || {};
 
-  return runCommand(cmd, { cwd, timeoutMs: timeout, maxBuffer, env });
+  return runCommand(cmd, { cwd, timeoutMs: timeout, maxBuffer, env,
+    redactLogs: opts.redactLogs, inheritSensitiveEnv: opts.inheritSensitiveEnv });
 }
 
 // Aliases for runGateCommand
@@ -93,10 +96,43 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
 
   const gatesRun = [];
 
-  for (const gate of gatesList) {
-    const res = runGateCommand(gate, cwd, opts);
+  for (let gateIndex = 0; gateIndex < gatesList.length; gateIndex++) {
+    const gate = gatesList[gateIndex];
+    let spec;
+    let approval;
+    try {
+      spec = resolveCommandSpec(gate, { cwd, phase: opts.phase || 'gate' });
+      approval = opts.db ? requireCommandApproval(spec, opts.db, opts.repoRoot || cwd) : { approved: false, runnable: true, mode: 'untracked', warning: null };
+    } catch (error) {
+      const failedGate = { cmd: typeof gate === 'string' ? gate : JSON.stringify(gate), argv: [], exitCode: 1, summary: error.message, error: error.message, code: error.code, policyHash: error.policyHash };
+      return { success: false, pass: false, gatesRun, failedGate, errorPayload: { cmd: failedGate.cmd, exitCode: 1, failure: error.message, error: error.message, code: error.code } };
+    }
+    let sandbox;
+    try { sandbox = prepareSandboxedCommand(spec, cwd, opts.repoRoot || cwd); }
+    catch (error) {
+      const failedGate = { cmd: spec.display, argv: spec.argv, exitCode: 1, summary: error.message, error: error.message, code: error.code, policyHash: spec.policyHash };
+      return { success: false, pass: false, gatesRun, failedGate, errorPayload: { cmd: failedGate.cmd, exitCode: 1, failure: error.message, error: error.message, code: error.code } };
+    }
+    const started = Date.now();
+    const modelProfile = identifyModelProfile(opts.actorName);
+    const resourceMaxBuffer = modelProfile.resourceClass === 'constrained' ? 5 * 1024 * 1024 : 10 * 1024 * 1024;
+    const res = runGateCommand(sandbox.argv, cwd, { ...opts, maxBuffer: Math.min(opts.maxBuffer || resourceMaxBuffer, resourceMaxBuffer),
+      timeoutMs: spec.timeout_ms || opts.timeoutMs || opts.timeout, redactLogs: getExecutionPolicy(opts.repoRoot || cwd).redact_logs !== false });
+    const durationMs = Date.now() - started;
+    let artifactHash = null;
+    if (opts.db && opts.taskId) {
+      if (!res.success) artifactHash = saveArtifact(JSON.stringify({ stdout: res.stdout, stderr: res.stderr, diagnostics: res.diagnostics }, null, 2), opts.repoRoot || cwd);
+      opts.db.prepare(`INSERT INTO gate_runs (id, task_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(randomUUID(), opts.taskId, opts.phase || 'gate', gateIndex, spec.policyHash, opts.actorName || 'unknown', modelProfile.id,
+          res.success ? 'passed' : 'failed', res.exitCode, durationMs, res.summary || null, artifactHash);
+      if (spec.idempotency === 'unsafe' && approval.approved) {
+        opts.db.prepare('UPDATE gate_approvals SET revoked_at = CURRENT_TIMESTAMP WHERE policy_hash = ?').run(spec.policyHash);
+      }
+    }
     if (!res.success) {
-      const failedGate = { cmd: res.cmd, argv: res.argv, exitCode: res.exitCode, summary: res.summary, error: res.error };
+      const failedGate = { cmd: res.cmd, argv: res.argv, exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr,
+        summary: res.summary, diagnostics: res.diagnostics, error: res.error, policyHash: spec.policyHash, artifactHash };
       return {
         success: false,
         pass: false,
@@ -110,7 +146,8 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
         }
       };
     }
-    gatesRun.push({ cmd: gate, exitCode: 0, status: 'PASS', stdout: res.stdout, stderr: res.stderr });
+    gatesRun.push({ cmd: gate, argv: spec.argv, policyHash: spec.policyHash, approval: approval.approved ? 'approved' : approval.mode,
+      sandbox: sandbox.sandbox, warning: approval.warning || sandbox.warning, exitCode: 0, status: 'PASS', durationMs, diagnostics: res.diagnostics, stdout: res.stdout, stderr: res.stderr });
   }
 
   return {
@@ -417,10 +454,19 @@ export function executeGatekeeper(params, db = getDb()) {
     timeoutMs,
     timeout,
     env,
-    maxBuffer
+    maxBuffer,
+    db,
+    taskId,
+    actorName,
+    repoRoot,
+    phase: 'gate'
   });
 
   if (!gatesResult.success) {
+    if (gatesResult.failedGate?.code === 'APPROVAL_REQUIRED') {
+      return { success: false, phase: 'APPROVAL_REQUIRED', error: gatesResult.failedGate.error,
+        failedGate: gatesResult.failedGate, gatesRun: gatesResult.gatesRun };
+    }
     const errorDetails = [
       `Gate Failed: ${gatesResult.failedGate.cmd}`,
       `Exit Code: ${gatesResult.failedGate.exitCode}`,

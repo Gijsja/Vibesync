@@ -11,8 +11,33 @@ export function identifier(value, name = 'id') {
 }
 function inputCommand(value, name) {
   if (typeof value === 'string') return string(value, name, 4000);
-  if (!Array.isArray(value) || !value.length || value.some(arg => typeof arg !== 'string' || arg.includes('\0'))) invalid(`${name} must be a string or non-empty argv array.`);
-  return value;
+  if (Array.isArray(value)) {
+    if (!value.length || value.some(arg => typeof arg !== 'string' || arg.includes('\0'))) invalid(`${name} must be a string, structured command, or non-empty argv array.`);
+    return value;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(`${name} must be a string, structured command, or non-empty argv array.`);
+  const type = value.type || 'argv';
+  if (!['argv', 'node-test', 'npm-script', 'pytest', 'make'].includes(type)) invalid(`${name}.type is not supported.`);
+  const result = { type };
+  if (value.argv !== undefined) result.argv = inputCommand(value.argv, `${name}.argv`);
+  if (value.command !== undefined) result.command = inputCommand(value.command, `${name}.command`);
+  if (value.args !== undefined) {
+    if (!Array.isArray(value.args) || value.args.some(arg => typeof arg !== 'string' || arg.includes('\0'))) invalid(`${name}.args must be an array of NUL-free strings.`);
+    result.args = value.args;
+  }
+  if (value.script !== undefined) result.script = string(value.script, `${name}.script`, 100);
+  if (value.target !== undefined) result.target = string(value.target, `${name}.target`, 100);
+  if (value.timeout_ms !== undefined) {
+    if (!Number.isInteger(value.timeout_ms) || value.timeout_ms < 1 || value.timeout_ms > 3600000) invalid(`${name}.timeout_ms must be between 1 and 3600000.`);
+    result.timeout_ms = value.timeout_ms;
+  }
+  if (value.network !== undefined) result.network = Boolean(value.network);
+  if (value.write_paths !== undefined) {
+    if (!Array.isArray(value.write_paths) || value.write_paths.some(item => typeof item !== 'string' || item.includes('\0'))) invalid(`${name}.write_paths must be an array of NUL-free strings.`);
+    result.write_paths = value.write_paths;
+  }
+  if (value.idempotency !== undefined) result.idempotency = string(value.idempotency, `${name}.idempotency`, 20);
+  return result;
 }
 export function featureInput(body) {
   return {
@@ -38,6 +63,11 @@ export function taskInput(body) {
     title: string(body.title, 'title', 300),
     allowed_paths: list(body.allowed_paths, 'allowed_paths', ['src/**']),
     required_gates: body.required_gates === undefined ? [['git', 'diff', '--check']] : commands(body.required_gates, 'required_gates'),
-    setup: commands(body.setup, 'setup')
+    setup: commands(body.setup, 'setup'),
+    model_hint: body.model_hint === undefined ? null : (() => {
+      const hint = string(body.model_hint, 'model_hint', 40);
+      if (!['gemini', 'claude', 'codex', 'local', 'generic'].includes(hint)) invalid('model_hint must be gemini, claude, codex, local, or generic.');
+      return hint;
+    })()
   };
 }

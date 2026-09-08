@@ -13,7 +13,7 @@ import { beginOperation, listOperations, assertWorkspaceIdle } from './operation
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDb, recordSettlementEvent, readArtifact, checkpointState } from './db.mjs';
-import { listTasks, ejectTaskToHuman, createTask, updateTask, releaseTaskLease, checkAndExpireLeases } from './tasks.mjs';
+import { listTasks, ejectTaskToHuman, createTask, updateTask, releaseTaskLease, heartbeatTaskLease, checkAndExpireLeases } from './tasks.mjs';
 import { listFeatures, createFeature } from './features.mjs';
 import { listIncubatorRecords, parkInsight, execGitWithBackoff, promoteIncubatorItem, discardIncubatorItem, getIncubatorItem, mergeIncubatorItems, promoteMultipleIncubatorItems, getConventions } from './incubator.mjs';
 import {
@@ -23,6 +23,21 @@ import {
   getDashboardPath
 } from './config.mjs';
 import { computeProviderUsage, updateProviderUsageConfig } from './usage.mjs';
+import { previewTask, previewFeature } from './policy.mjs';
+import { scanSecretEntries } from './secrets.mjs';
+
+function scanChangedWorkspaceSecrets(repoRoot) {
+  const files = execGitWithBackoff(['ls-files', '-m', '-o', '--exclude-standard', '-z'], { cwd: repoRoot, raw: true }).split('\0').filter(Boolean);
+  const entries = [];
+  for (const file of files) {
+    const target = path.resolve(repoRoot, file);
+    if (!(target === repoRoot || target.startsWith(repoRoot + path.sep))) continue;
+    try {
+      if (fs.lstatSync(target).isFile()) entries.push({ file, content: fs.readFileSync(target, 'utf8') });
+    } catch {}
+  }
+  return scanSecretEntries(entries);
+}
 
 /**
  * Synthesizes dynamic multi-agent teamwork list from tasks and assigned actors.
@@ -185,6 +200,8 @@ export function getPayload(db = getDb(), repoRoot = process.cwd()) {
   const tasks = (listTasks({}, db) || []).map(task => ({ ...task, verifying: operations.some(op => op.status === 'running' && op.kind === 'task' && op.target_id === task.id) }));
   const incubator = listIncubatorRecords('parked', db) || [];
   const providers = computeProviderUsage(db, repoRoot);
+  const gateRuns = db.prepare('SELECT * FROM gate_runs ORDER BY started_at DESC LIMIT 50').all();
+  const gateApprovals = db.prepare('SELECT policy_hash, task_id, feature_id, phase, approved_by, approved_at, revoked_at FROM gate_approvals ORDER BY approved_at DESC LIMIT 50').all();
 
   const events = db.prepare(`
     SELECT * FROM settlement_events
@@ -204,6 +221,8 @@ export function getPayload(db = getDb(), repoRoot = process.cwd()) {
     incubator,
     conventions,
     events,
+    gateRuns,
+    gateApprovals,
     providers,
     agents
   };
@@ -454,7 +473,8 @@ export async function startServer(options = {}) {
         const head = execGitWithBackoff(['rev-parse', 'HEAD'], { cwd: repoRoot });
         const status = execGitWithBackoff(['status', '--short', '-uall'], { cwd: repoRoot });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ branch, trunk, head, status, canCommit: branch === trunk }));
+        const secretFindings = scanChangedWorkspaceSecrets(repoRoot);
+        return res.end(JSON.stringify({ branch, trunk, head, status, secretFindings, canCommit: branch === trunk && secretFindings.length === 0 }));
       }
 
       // 6. POST /api/hotfix -> Emergency hotfix commit direct to main
@@ -468,6 +488,8 @@ export async function startServer(options = {}) {
         const currentBranch = execGitWithBackoff(['symbolic-ref', '--short', 'HEAD'], { cwd: repoRoot });
         if (currentBranch !== getTrunk(repoRoot)) throw requestError(409, 'Switch the repository to its trunk branch before making a hotfix.');
         if (body.expectedHead && body.expectedHead !== execGitWithBackoff(['rev-parse', 'HEAD'], { cwd: repoRoot })) throw requestError(409, 'Trunk changed since preview. Reopen the hotfix preview.');
+        const secretFindings = scanChangedWorkspaceSecrets(repoRoot);
+        if (secretFindings.length) throw requestError(409, `Potential secrets detected; hotfix was not staged: ${secretFindings.map(item => `${item.file} (${item.code})`).join(', ')}.`);
         try {
           execGitWithBackoff(['add', '-A'], { cwd: repoRoot });
           execGitWithBackoff(['commit', '--allow-empty', '-F', '-'], { cwd: repoRoot, input: `hotfix: ${message}` });
@@ -556,9 +578,28 @@ export async function startServer(options = {}) {
       }
 
       // Lifecycle controls use persisted IDs, never interpolated shell commands.
+      if (pathname === '/api/tasks/preview' && req.method === 'POST') {
+        const body = await readBodyJson(req);
+        const result = previewTask({ taskId: body.taskId, actorName: body.actorName || 'unknown' }, db, repoRoot);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
+      }
+      if (pathname === '/api/features/preview' && req.method === 'POST') {
+        const body = await readBodyJson(req);
+        const result = previewFeature({ featureId: body.featureId, actorName: body.actorName || 'unknown' }, db, repoRoot);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
+      }
       if (pathname === '/api/tasks/claim' && req.method === 'POST') {
         const body = await readBodyJson(req);
         const result = startTask({ taskId: body.taskId, actorName: body.actorName || 'human' }, db, repoRoot);
+        broadcastState();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
+      }
+      if (pathname === '/api/tasks/heartbeat' && req.method === 'POST') {
+        const body = await readBodyJson(req);
+        const result = heartbeatTaskLease({ taskId: body.taskId, actorName: body.actorName, leaseToken: body.leaseToken, progressFingerprint: body.progressFingerprint }, db);
         broadcastState();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(result));

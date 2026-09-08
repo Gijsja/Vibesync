@@ -12,6 +12,7 @@ export * from './features.mjs';
 export * from './tasks.mjs';
 export * from './guard.mjs';
 export * from './gatekeeper.mjs';
+export * from './policy.mjs';
 export * from './merge.mjs';
 export * from './settle.mjs';
 export * from './server.mjs';

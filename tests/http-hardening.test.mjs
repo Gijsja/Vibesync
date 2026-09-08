@@ -61,6 +61,16 @@ test('HTTP boundary rejects hostile requests and preserves literal data', async 
         assert.equal(execFileSync('git', ['log', '-1', '--format=%B'], { cwd: sandbox.dir, encoding: 'utf8' }).trim(), `hotfix: ${message}`);
         assert.equal((await request(port, '/api/hotfix', '{"message":{}}')).status, 400);
       });
+      await t.test('hotfix refuses to stage high-confidence secrets', async () => {
+        const secretPath = path.join(sandbox.dir, 'accidental-key.txt');
+        fs.writeFileSync(secretPath, '-----BEGIN ' + 'PRIVATE KEY-----\nnot-real-test-material\n');
+        const res = await request(port, '/api/hotfix', JSON.stringify({ message: 'must not commit' }), { Origin: `http://127.0.0.1:${port}` });
+        assert.equal(res.status, 409, res.text);
+        assert.match(res.text, /Potential secrets detected/);
+        assert.doesNotMatch(res.text, /not-real-test-material/);
+        assert.equal(execFileSync('git', ['status', '--porcelain', '--', 'accidental-key.txt'], { cwd: sandbox.dir, encoding: 'utf8' }).trim(), '?? accidental-key.txt');
+        fs.unlinkSync(secretPath);
+      });
       await t.test('embedded dashboard state cannot close its script element', async () => {
         const title = '$& $` $\' </script><script>globalThis.compromised=true</script>';
         createFeature({ id: 'FEAT-XSS', title, target_milestone: 'v1', spec_markdown: 'Regression fixture' }, db);

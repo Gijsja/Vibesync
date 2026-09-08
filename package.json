@@ -13,6 +13,7 @@
     "./tasks": "./src/tasks.mjs",
     "./guard": "./src/guard.mjs",
     "./gatekeeper": "./src/gatekeeper.mjs",
+    "./policy": "./src/policy.mjs",
     "./merge": "./src/merge.mjs",
     "./settle": "./src/settle.mjs",
     "./server": "./src/server.mjs",

@@ -13,6 +13,7 @@ import { getTask } from './tasks.mjs';
 import { getFeature } from './features.mjs';
 import { checkScopeBoundary } from './guard.mjs';
 import { executeGates, recordGateFailure, resetGateFailures } from './gatekeeper.mjs';
+import { scanSecretEntries } from './secrets.mjs';
 import { simulateMergeTree } from './merge.mjs';
 import { execGitWithBackoff, parkInsight } from './incubator.mjs';
 import { getTrunk } from './workspace.mjs';
@@ -219,6 +220,14 @@ export function performSquashSettlement(params) {
 
   const base = git(['merge-base', targetBranch, task.branch_name]);
   const changedFiles = git(['diff', '--no-renames', '--name-only', '-z', base, task.branch_name, '--'], { raw: true }).split('\0').filter(Boolean);
+  const secretFindings = scanSecretEntries(changedFiles.map(file => {
+    try { return { file, content: git(['show', `${task.branch_name}:${file}`], { raw: true }) }; }
+    catch { return { file, content: '' }; }
+  }));
+  if (secretFindings.length) {
+    throw Object.assign(new Error(`Potential secrets detected in task changes: ${secretFindings.map(item => `${item.file} (${item.code})`).join(', ')}.`),
+      { phase: 'SECRET_DETECTED', findings: secretFindings });
+  }
   ensureRuntimeExcludes(repoRoot);
   const status = git(['status', '--porcelain=v1', '-z', '-uall'], { raw: true });
   const records = status.split('\0').filter(Boolean);
@@ -266,7 +275,7 @@ export function performSquashSettlement(params) {
 
     db.exec('BEGIN IMMEDIATE');
     try {
-      const updated = db.prepare("UPDATE tasks SET status = 'settled', settled_commit = ?, consecutive_failures = 0, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'in_progress'").run(settledSha, task.id);
+      const updated = db.prepare("UPDATE tasks SET status = 'settled', settled_commit = ?, consecutive_failures = 0, lease_expires_at = NULL, lease_token_hash = NULL, last_heartbeat_at = NULL, progress_fingerprint = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'in_progress'").run(settledSha, task.id);
       if (!updated.changes) throw new Error('Task state changed during settlement.');
       recordSettlementEvent(db, { task_id: task.id, feature_id: task.feature_id,
         actor: actorName || task.assigned_actor || 'system', action: 'task_settled', commit_ref: settledSha,
@@ -368,6 +377,11 @@ export function verifyAndSettleTask(params, maybeDb, maybeRepoRoot) {
   if (task.status !== 'in_progress') {
     throw new Error(`Task ${taskId} is not in_progress (status: ${task.status}).`);
   }
+  if (task.assigned_actor && task.assigned_actor !== actorName) {
+    throw Object.assign(new Error(`Task ${taskId} is leased to ${task.assigned_actor}, not ${actorName}.`), { phase: 'LEASE_OWNER_MISMATCH' });
+  }
+  const lease = db.prepare("SELECT datetime(lease_expires_at) <= datetime('now') AS expired FROM tasks WHERE id = ?").get(taskId);
+  if (lease?.expired) throw Object.assign(new Error(`Task ${taskId} lease expired before verification.`), { phase: 'LEASE_EXPIRED' });
 
   if (worktreePath && !fs.existsSync(worktreePath)) throw new Error('Task workspace is missing. Restore it before verification.');
   const effectiveCwd = worktreePath || repoRoot;
@@ -413,10 +427,19 @@ export function verifyAndSettleTask(params, maybeDb, maybeRepoRoot) {
     timeoutMs: params.timeoutMs,
     timeout: params.timeout,
     env: params.env,
-    maxBuffer: params.maxBuffer
+    maxBuffer: params.maxBuffer,
+    db,
+    taskId: task.id,
+    actorName,
+    repoRoot,
+    phase: 'gate'
   });
 
   if (!gatesRes.success) {
+    if (gatesRes.failedGate?.code === 'APPROVAL_REQUIRED') {
+      return { success: false, phase: 'APPROVAL_REQUIRED', error: gatesRes.failedGate.error,
+        failedGate: gatesRes.failedGate, gatesRun: gatesRes.gatesRun };
+    }
     const errorDetails = [
       `Gate Failed: ${gatesRes.failedGate.cmd}`,
       `Exit Code: ${gatesRes.failedGate.exitCode}`,

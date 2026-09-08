@@ -16,16 +16,24 @@ import { getDb } from './db.mjs';
 import { beginOperation, assertWorkspaceIdle } from './operations.mjs';
 import { startTask } from './workspace.mjs';
 import { featureInput, taskInput } from './input.mjs';
-import { claimTask, createTask, releaseTaskLease, getTask, listTasks } from './tasks.mjs';
+import { claimTask, createTask, releaseTaskLease, heartbeatTaskLease, getTask, listTasks } from './tasks.mjs';
 import { createFeature, getFeature } from './features.mjs';
 import { parkInsight, mergeIncubatorItems, getConventions, getIncubatorItem, promoteIncubatorItem } from './incubator.mjs';
 import { verifyAndSettleTask } from './settle.mjs';
 import { getPayload } from './server.mjs';
 import { repairDatabase } from './repair.mjs';
+import { previewTask, previewFeature, approveTaskCommand, approveFeatureCommand } from './policy.mjs';
 
 const commandSchema = { oneOf: [
   { type: 'string', description: 'Legacy shell-free command string.' },
-  { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Preferred executable and argument array.' }
+  { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Executable and argument array.' },
+  { type: 'object', properties: {
+    type: { type: 'string', enum: ['argv', 'node-test', 'npm-script', 'pytest', 'make'] },
+    argv: { type: 'array', minItems: 1, items: { type: 'string' } }, args: { type: 'array', items: { type: 'string' } },
+    script: { type: 'string' }, target: { type: 'string' }, timeout_ms: { type: 'integer', minimum: 1, maximum: 3600000 },
+    network: { type: 'boolean' }, write_paths: { type: 'array', items: { type: 'string' } },
+    idempotency: { type: 'string', enum: ['safe', 'unsafe'] }
+  }, required: ['type'], description: 'Structured command contract with explicit capabilities.' }
 ] };
 const annotations = (readOnlyHint, destructiveHint, idempotentHint) => ({ readOnlyHint, destructiveHint, idempotentHint, openWorldHint: false });
 const description = (purpose, use, avoid, effects) => `Purpose: ${purpose}\nWhen to use: ${use}\nWhen NOT to use: ${avoid}\nSide effects: ${effects}`;
@@ -34,8 +42,11 @@ const TOOL_ROLES = Object.freeze({
   vibesync_create_feature: 'admin', vibesync_create_task: 'admin', vibesync_release_task: 'admin',
   vibesync_merge_insights: 'admin', vibesync_settle_feature: 'admin', vibesync_repair_state: 'admin',
   vibesync_promote_insight: 'admin',
+  vibesync_approve_task_command: 'admin',
+  vibesync_approve_feature_command: 'admin',
   vibesync_get_state: 'admin', vibesync_list_ready_tasks: 'worker', vibesync_get_task_detail: 'worker',
-  vibesync_claim_task: 'worker', vibesync_verify_and_settle: 'worker', vibesync_park_insight: 'worker'
+  vibesync_preview_task: 'worker', vibesync_preview_feature: 'worker', vibesync_claim_task: 'worker', vibesync_heartbeat_task: 'worker',
+  vibesync_verify_and_settle: 'worker', vibesync_park_insight: 'worker'
 });
 
 /**
@@ -73,7 +84,8 @@ export function createMcpServer(options = {}) {
           id: { type: 'string', description: 'Optional; server generates TASK-01.1 style IDs.' }, feature_id: { type: 'string' }, title: { type: 'string' },
           allowed_paths: { type: 'array', items: { type: 'string' } },
           required_gates: { type: 'array', items: commandSchema },
-          setup: { type: 'array', items: commandSchema, description: 'Optional commands executed in order after managed worktree creation.' }
+          setup: { type: 'array', items: commandSchema, description: 'Optional commands executed in order after managed worktree creation.' },
+          model_hint: { type: 'string', enum: ['gemini', 'claude', 'codex', 'local', 'generic'], description: 'Suggested model family; never grants additional permissions.' }
         }, required: ['feature_id', 'title', 'allowed_paths', 'required_gates'] }
       },
       {
@@ -99,6 +111,26 @@ export function createMcpServer(options = {}) {
         inputSchema: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] }
       },
       {
+        name: 'vibesync_preview_task',
+        description: description('Preview cost, commands, approvals, and model suitability before claiming.', 'Any worker is deciding whether it can safely execute a task.', 'Do not treat suitability as authorization.', 'Read-only; resolves command policy hashes against the current checkout.'), annotations: annotations(true, false, true),
+        inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, actor_name: { type: 'string' } }, required: ['task_id', 'actor_name'] }
+      },
+      {
+        name: 'vibesync_approve_task_command',
+        description: description('Approve the current resolved form of one task command.', 'A human administrator reviewed the preview and command capabilities.', 'Do not approve on behalf of an untrusted worker.', 'Persists a hash-bound approval invalidated by command or package-script changes.'), annotations: annotations(false, true, false),
+        inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, phase: { type: 'string', enum: ['setup', 'gate', 'feature'] }, index: { type: 'integer', minimum: 0 }, approved_by: { type: 'string' } }, required: ['task_id', 'phase', 'index', 'approved_by'] }
+      },
+      {
+        name: 'vibesync_preview_feature',
+        description: description('Preview a feature holistic gate and its approval state.', 'An administrator or reviewer is preparing feature settlement.', 'Do not treat preview as approval.', 'Read-only; resolves the holistic gate against the current checkout.'), annotations: annotations(true, false, true),
+        inputSchema: { type: 'object', properties: { feature_id: { type: 'string' }, actor_name: { type: 'string' } }, required: ['feature_id', 'actor_name'] }
+      },
+      {
+        name: 'vibesync_approve_feature_command',
+        description: description('Approve the current resolved holistic feature gate.', 'A human administrator reviewed the gate and capabilities.', 'Do not approve on behalf of an untrusted worker.', 'Persists a hash-bound approval invalidated by gate or package-script changes.'), annotations: annotations(false, true, false),
+        inputSchema: { type: 'object', properties: { feature_id: { type: 'string' }, approved_by: { type: 'string' } }, required: ['feature_id', 'approved_by'] }
+      },
+      {
         name: 'vibesync_claim_task',
         description: description('Lease a ready task and prepare its workspace.', 'A worker is ready to execute the existing contract.', 'Do not use for blocked or already-leased tasks.', 'Changes DB lease state; may create a worktree, install a scope hook, and run declared setup commands.'), annotations: annotations(false, false, false),
         inputSchema: {
@@ -110,6 +142,11 @@ export function createMcpServer(options = {}) {
           },
           required: ['task_id', 'actor_name']
         }
+      },
+      {
+        name: 'vibesync_heartbeat_task',
+        description: description('Renew an owned task lease with optional progress evidence.', 'A working agent remains active, including slower local models.', 'Do not use another actor’s token or revive an expired lease outside its grace window.', 'Extends the lease only when actor and opaque lease token still match.'), annotations: annotations(false, false, true),
+        inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, actor_name: { type: 'string' }, lease_token: { type: 'string' }, progress_fingerprint: { type: 'string' } }, required: ['task_id', 'actor_name', 'lease_token'] }
       },
       {
         name: 'vibesync_verify_and_settle',
@@ -250,7 +287,7 @@ export function createMcpServer(options = {}) {
 
       if (name === 'vibesync_list_ready_tasks') {
         const tasks = listTasks(db, { status: 'ready', feature_id: args.feature_id }).slice(0, args.limit || 20)
-          .map(({ id, feature_id, title, priority, labels, allowed_paths, required_gates }) => ({ id, feature_id, title, priority, labels, allowed_paths, required_gates }));
+          .map(({ id, feature_id, title, priority, labels, allowed_paths, required_gates, model_hint }) => ({ id, feature_id, title, priority, labels, allowed_paths, required_gates, model_hint }));
         return { content: [{ type: 'text', text: JSON.stringify({ tasks, count: tasks.length }, null, 2) }] };
       }
 
@@ -259,6 +296,26 @@ export function createMcpServer(options = {}) {
         if (!task) throw Object.assign(new Error(`Task ${args.task_id} not found.`), { code: 'NOT_FOUND' });
         const feature = getFeature(task.feature_id, db);
         return { content: [{ type: 'text', text: JSON.stringify({ task, feature }, null, 2) }] };
+      }
+
+      if (name === 'vibesync_preview_task') {
+        return { content: [{ type: 'text', text: JSON.stringify(previewTask({ taskId: args.task_id, actorName: args.actor_name }, db, repoRoot), null, 2) }] };
+      }
+
+      if (name === 'vibesync_approve_task_command') {
+        const result = approveTaskCommand({ taskId: args.task_id, phase: args.phase, index: args.index, approvedBy: args.approved_by }, db, repoRoot);
+        if (onUpdate) onUpdate();
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      if (name === 'vibesync_preview_feature') {
+        return { content: [{ type: 'text', text: JSON.stringify(previewFeature({ featureId: args.feature_id, actorName: args.actor_name }, db, repoRoot), null, 2) }] };
+      }
+
+      if (name === 'vibesync_approve_feature_command') {
+        const result = approveFeatureCommand({ featureId: args.feature_id, approvedBy: args.approved_by }, db, repoRoot);
+        if (onUpdate) onUpdate();
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       if (name === 'vibesync_claim_task') {
@@ -288,11 +345,20 @@ export function createMcpServer(options = {}) {
                 message: `Task ${args.task_id} leased to ${args.actor_name} on branch ${result.task.branch_name}.`,
                 anchor: result.activeTaskAnchorPath,
                 task: result.task,
+                lease_token: result.leaseToken,
+                heartbeat_minutes: result.heartbeatMinutes,
+                model_profile: result.modelProfile,
                 conventions
               }, null, 2)
             }
           ]
         };
+      }
+
+      if (name === 'vibesync_heartbeat_task') {
+        const result = heartbeatTaskLease({ taskId: args.task_id, actorName: args.actor_name, leaseToken: args.lease_token, progressFingerprint: args.progress_fingerprint }, db);
+        if (onUpdate) onUpdate();
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       if (name === 'vibesync_verify_and_settle') {

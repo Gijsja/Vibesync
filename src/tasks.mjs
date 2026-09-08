@@ -7,10 +7,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { getDb, recordSettlementEvent, checkpointState } from './db.mjs';
 import { getFeature } from './features.mjs';
 import { execGitWithBackoff } from './incubator.mjs';
 import { TASK_STATUSES, PRIORITY_LEVELS } from './config.mjs';
+import { identifyModelProfile } from './policy.mjs';
 
 /**
  * Validates task identifier syntax.
@@ -40,13 +42,15 @@ export function generateNextTaskId(featureId, db = getDb()) {
  */
 function deserializeTask(row) {
   if (!row) return null;
-  return {
+  const task = {
     ...row,
     allowed_paths: typeof row.allowed_paths === 'string' ? JSON.parse(row.allowed_paths) : row.allowed_paths,
     required_gates: typeof row.required_gates === 'string' ? JSON.parse(row.required_gates) : row.required_gates,
     setup: typeof row.setup === 'string' ? JSON.parse(row.setup) : (row.setup || []),
     labels: typeof row.labels === 'string' ? JSON.parse(row.labels) : (row.labels || [])
   };
+  delete task.lease_token_hash;
+  return task;
 }
 
 /**
@@ -64,6 +68,7 @@ function deserializeTask(row) {
  * @param {Array<string>} [params.required_gates=[]]
  * @param {Array<string|Array<string>>} [params.setup=[]] - Commands run after managed worktree provisioning
  * @param {number} [params.max_failures=3]
+ * @param {string|null} [params.model_hint=null]
  * @param {DatabaseSync} [db]
  * @returns {object} Created task record
  */
@@ -79,7 +84,8 @@ export function createTask(params, db = getDb()) {
     allowed_paths = ['*'],
     required_gates = [],
     setup = [],
-    max_failures = 3
+    max_failures = 3,
+    model_hint = null
   } = params;
 
   if (!id || !feature_id || !title) {
@@ -100,11 +106,11 @@ export function createTask(params, db = getDb()) {
   const setupJson = Array.isArray(setup) ? JSON.stringify(setup) : setup;
 
   const stmt = db.prepare(`
-    INSERT INTO tasks (id, feature_id, title, status, priority, labels, external_ref, allowed_paths, required_gates, setup, max_failures)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (id, feature_id, title, status, priority, labels, external_ref, allowed_paths, required_gates, setup, max_failures, model_hint)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  stmt.run(id, feature_id, title, status, priority, labelsJson, external_ref, allowedPathsJson, requiredGatesJson, setupJson, max_failures);
+  stmt.run(id, feature_id, title, status, priority, labelsJson, external_ref, allowedPathsJson, requiredGatesJson, setupJson, max_failures, model_hint);
 
   checkpointState(db);
   return getTask(id, db);
@@ -227,6 +233,7 @@ export function updateTask(id, updates, db = getDb()) {
     'labels',
     'external_ref',
     'assigned_actor',
+    'model_hint',
     'allowed_paths',
     'required_gates',
   ];
@@ -279,7 +286,7 @@ export function hydrateActiveTaskAnchor(worktreePath, task, feature) {
     : '- `*` (All workspace paths allowed)';
 
   const gatesList = task.required_gates && task.required_gates.length > 0
-    ? task.required_gates.map(g => `- \`${g}\``).join('\n')
+    ? task.required_gates.map(g => `- \`${typeof g === 'string' ? g : JSON.stringify(g)}\``).join('\n')
     : '- None (Immediate settlement allowed)';
 
   const labelsText = Array.isArray(task.labels) && task.labels.length > 0
@@ -376,6 +383,9 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
 
   // 4. Branch Name & Base Commit
   const branchName = `task/${taskId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+  const modelProfile = identifyModelProfile(actorName);
+  const leaseToken = crypto.randomUUID();
+  const leaseTokenHash = crypto.createHash('sha256').update(leaseToken).digest('hex');
   let baseCommit = '0000000';
   try {
     baseCommit = execGitWithBackoff(['rev-parse', '--short', 'HEAD'], { cwd: repoRoot });
@@ -389,13 +399,17 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
         assigned_actor = ?,
         branch_name = ?,
         base_commit = ?,
-        lease_expires_at = datetime('now', '+45 minutes'),
+        lease_expires_at = datetime('now', ?),
+        lease_generation = lease_generation + 1,
+        lease_token_hash = ?,
+        last_heartbeat_at = CURRENT_TIMESTAMP,
+        progress_fingerprint = NULL,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
       AND (status != 'in_progress' OR datetime(lease_expires_at) <= datetime('now'))
       AND status != 'settled'
       AND (status != 'blocked' OR ? = 'human')
-  `).run(actorName, actorName, branchName, baseCommit, taskId, actorName);
+  `).run(actorName, actorName, branchName, baseCommit, `+${modelProfile.leaseMinutes} minutes`, leaseTokenHash, taskId, actorName);
 
   if (updateRes.changes === 0) {
     throw new Error(`Task ${taskId} is currently in_progress (concurrently claimed).`);
@@ -419,15 +433,40 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
     commit_ref: baseCommit,
     evidence_payload: {
       branch_name: branchName,
-      lease_expires_at: updatedTask.lease_expires_at
+      lease_expires_at: updatedTask.lease_expires_at,
+      lease_generation: updatedTask.lease_generation,
+      model_profile: modelProfile.id
     }
   });
 
   return {
     success: true,
     activeTaskAnchorPath,
-    task: updatedTask
+    task: updatedTask,
+    leaseToken,
+    heartbeatMinutes: modelProfile.heartbeatMinutes,
+    modelProfile: modelProfile.id
   };
+}
+
+/** Renew a lease only for its current owner and unguessable lease generation token. */
+export function heartbeatTaskLease(params, db = getDb()) {
+  const { taskId, actorName, leaseToken, progressFingerprint = null } = params;
+  if (!taskId || !actorName || !leaseToken) throw new Error('taskId, actorName, and leaseToken are required.');
+  const tokenHash = crypto.createHash('sha256').update(leaseToken).digest('hex');
+  const profile = identifyModelProfile(actorName);
+  const result = db.prepare(`
+    UPDATE tasks
+    SET lease_expires_at = datetime('now', ?),
+        last_heartbeat_at = CURRENT_TIMESTAMP,
+        progress_fingerprint = COALESCE(?, progress_fingerprint),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'in_progress' AND assigned_actor = ? AND lease_token_hash = ?
+      AND datetime(lease_expires_at) > datetime('now', '-2 minutes')
+  `).run(`+${profile.leaseMinutes} minutes`, progressFingerprint, taskId, actorName, tokenHash);
+  if (!result.changes) throw Object.assign(new Error('Lease heartbeat rejected: ownership, token, or grace window no longer matches.'), { code: 'LEASE_STALE' });
+  checkpointState(db);
+  return { success: true, task: getTask(taskId, db), heartbeatMinutes: profile.heartbeatMinutes, modelProfile: profile.id };
 }
 
 /**
@@ -445,6 +484,9 @@ export function releaseTaskLease(taskId, db = getDb()) {
     SET status = 'ready',
         assigned_actor = NULL,
         lease_expires_at = NULL,
+        lease_token_hash = NULL,
+        last_heartbeat_at = NULL,
+        progress_fingerprint = NULL,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ? AND status = 'in_progress'
   `).run(taskId);
@@ -470,7 +512,7 @@ export function checkAndExpireLeases(db = getDb()) {
   const expired = db.prepare("SELECT * FROM tasks WHERE status = 'in_progress' AND lease_expires_at IS NOT NULL AND datetime(lease_expires_at) <= datetime('now')").all();
   let released = 0;
   for (const task of expired) {
-    const result = db.prepare("UPDATE tasks SET status = 'ready', assigned_actor = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'in_progress' AND assigned_actor IS ? AND lease_expires_at IS ? AND datetime(lease_expires_at) <= datetime('now')").run(task.id, task.assigned_actor, task.lease_expires_at);
+    const result = db.prepare("UPDATE tasks SET status = 'ready', assigned_actor = NULL, lease_expires_at = NULL, lease_token_hash = NULL, last_heartbeat_at = NULL, progress_fingerprint = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'in_progress' AND assigned_actor IS ? AND lease_expires_at IS ? AND datetime(lease_expires_at) <= datetime('now')").run(task.id, task.assigned_actor, task.lease_expires_at);
     if (!result.changes) continue;
     released++;
     recordSettlementEvent(db, { task_id: task.id, feature_id: task.feature_id, actor: 'system', action: 'lease_released', commit_ref: 'HEAD',
@@ -496,6 +538,9 @@ export function ejectTaskToHuman(taskId, db = getDb(), repoRoot = process.cwd())
     UPDATE tasks
     SET assigned_actor = 'human',
         lease_expires_at = CASE WHEN status = 'in_progress' THEN datetime('now', '+45 minutes') ELSE lease_expires_at END,
+        lease_token_hash = NULL,
+        last_heartbeat_at = CASE WHEN status = 'in_progress' THEN CURRENT_TIMESTAMP ELSE last_heartbeat_at END,
+        progress_fingerprint = NULL,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(taskId);

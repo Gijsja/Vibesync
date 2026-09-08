@@ -93,6 +93,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     max_failures INTEGER NOT NULL DEFAULT 3,
     lease_expires_at DATETIME,
+    lease_generation INTEGER NOT NULL DEFAULT 0,
+    lease_token_hash TEXT,
+    last_heartbeat_at DATETIME,
+    progress_fingerprint TEXT,
+    model_hint TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE CASCADE
@@ -138,6 +143,41 @@ CREATE TABLE IF NOT EXISTS operations (
     finished_at DATETIME
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_one_running_operation ON operations(status) WHERE status = 'running';
+
+CREATE TABLE IF NOT EXISTS gate_approvals (
+    policy_hash TEXT PRIMARY KEY,
+    task_id TEXT,
+    feature_id TEXT,
+    phase TEXT NOT NULL CHECK(phase IN ('setup', 'gate', 'feature')),
+    command_json JSON NOT NULL,
+    approved_by TEXT NOT NULL,
+    approved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    revoked_at DATETIME,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS gate_runs (
+    id TEXT PRIMARY KEY,
+    task_id TEXT,
+    feature_id TEXT,
+    phase TEXT NOT NULL CHECK(phase IN ('setup', 'gate', 'feature')),
+    gate_index INTEGER NOT NULL,
+    policy_hash TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    model_profile TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('passed', 'failed', 'blocked')),
+    exit_code INTEGER,
+    duration_ms INTEGER NOT NULL,
+    summary TEXT,
+    artifact_hash TEXT,
+    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    finished_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+    FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gate_runs_task ON gate_runs(task_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_gate_runs_hash ON gate_runs(policy_hash);
 
 CREATE INDEX IF NOT EXISTS idx_tasks_feature ON tasks(feature_id);
 CREATE INDEX IF NOT EXISTS idx_features_status ON features(status);
@@ -261,7 +301,16 @@ export function migrateSchema(db) {
     if (!taskCols.includes('setup')) {
       db.exec("ALTER TABLE tasks ADD COLUMN setup JSON NOT NULL DEFAULT '[]';");
     }
+    if (!taskCols.includes('lease_generation')) db.exec('ALTER TABLE tasks ADD COLUMN lease_generation INTEGER NOT NULL DEFAULT 0;');
+    if (!taskCols.includes('lease_token_hash')) db.exec('ALTER TABLE tasks ADD COLUMN lease_token_hash TEXT;');
+    if (!taskCols.includes('last_heartbeat_at')) db.exec('ALTER TABLE tasks ADD COLUMN last_heartbeat_at DATETIME;');
+    if (!taskCols.includes('progress_fingerprint')) db.exec('ALTER TABLE tasks ADD COLUMN progress_fingerprint TEXT;');
+    if (!taskCols.includes('model_hint')) db.exec('ALTER TABLE tasks ADD COLUMN model_hint TEXT;');
   }
+  const approvalCols = db.prepare('PRAGMA table_info(gate_approvals)').all().map(c => c.name);
+  if (approvalCols.length && !approvalCols.includes('feature_id')) db.exec('ALTER TABLE gate_approvals ADD COLUMN feature_id TEXT REFERENCES features(id) ON DELETE CASCADE;');
+  const runCols = db.prepare('PRAGMA table_info(gate_runs)').all().map(c => c.name);
+  if (runCols.length && !runCols.includes('feature_id')) db.exec('ALTER TABLE gate_runs ADD COLUMN feature_id TEXT REFERENCES features(id) ON DELETE SET NULL;');
 }
 
 export function initSchema(db) {

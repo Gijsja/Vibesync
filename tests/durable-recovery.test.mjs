@@ -23,7 +23,7 @@ test('Git checkpoint restores exact contracts, leases, promotion links, events a
     promoteIncubatorItem({ id: 'INC-DURABLE', featureId: 'FEAT-DURABLE' }, db, sandbox.dir);
     const hash = saveArtifact('diagnostic output\n', sandbox.dir);
     recordSettlementEvent(db, { task_id: 'TASK-DURABLE', feature_id: 'FEAT-DURABLE', actor: 'human', action: 'gate_failed', commit_ref: head, artifact_hash: hash });
-    const before = Object.fromEntries(STATE_TABLES.map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]));
+    const before = Object.fromEntries(STATE_TABLES.map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
     assert.equal(sandbox.execGit('git rev-parse HEAD'), head, 'Checkpoint must not alter trunk');
     closeDb(db);
     fs.unlinkSync(dbPath);
@@ -31,10 +31,10 @@ test('Git checkpoint restores exact contracts, leases, promotion links, events a
     const summary = repairDatabase(sandbox.dir);
     assert.equal(summary.recoveryMode, 'checkpoint');
     db = getDb(dbPath, sandbox.dir);
-    for (const table of STATE_TABLES) assert.deepEqual(db.prepare(`SELECT * FROM ${table} ORDER BY id`).all(), before[table], table);
+    for (const table of STATE_TABLES) assert.deepEqual(db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(), before[table], table);
     assert.equal(readArtifact(hash, sandbox.dir), 'diagnostic output\n');
     repairDatabase(sandbox.dir, db);
-    for (const table of STATE_TABLES) assert.deepEqual(db.prepare(`SELECT * FROM ${table} ORDER BY id`).all(), before[table], `${table} repeated recovery`);
+    for (const table of STATE_TABLES) assert.deepEqual(db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(), before[table], `${table} repeated recovery`);
   });
 });
 

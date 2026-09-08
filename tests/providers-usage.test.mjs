@@ -42,6 +42,7 @@ test('AI Provider Quota & 5-Hour Usage Suite', async (t) => {
     assert.equal(matchProvider('claude')?.id, 'claude');
 
     assert.equal(matchProvider('deepseek-coder')?.id, 'deepseek');
+    assert.equal(matchProvider('ollama-qwen')?.id, 'local');
     assert.equal(matchProvider('human'), null);
     assert.equal(matchProvider('system'), null);
   });

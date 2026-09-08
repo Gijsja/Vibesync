@@ -1,5 +1,34 @@
 import { spawnSync } from 'node:child_process';
 
+const SENSITIVE_ENV = /(?:TOKEN|SECRET|PASSWORD|PASSWD|COOKIE|CREDENTIAL|PRIVATE_KEY|API_KEY|AUTHORIZATION)/i;
+
+export function sanitizedEnvironment(overrides = {}, { inheritSensitive = false } = {}) {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!inheritSensitive && SENSITIVE_ENV.test(key)) continue;
+    env[key] = value;
+  }
+  return { ...env, ...overrides };
+}
+
+export function redactSensitive(text = '') {
+  return String(text)
+    .replace(/\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{16,}\b/g, '[REDACTED_TOKEN]')
+    .replace(/((?:token|secret|password|api[_-]?key|authorization)\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]');
+}
+
+export function parseDiagnostics(stdout = '', stderr = '') {
+  const diagnostics = [];
+  for (const line of `${stderr}\n${stdout}`.split(/\r?\n/)) {
+    const match = line.match(/^(.+?):(\d+)(?::(\d+))?\s*[-:]\s*(?:(error|warning)\s*)?(.*)$/i);
+    if (!match) continue;
+    diagnostics.push({ file: match[1], line: Number(match[2]), column: match[3] ? Number(match[3]) : null,
+      severity: (match[4] || 'error').toLowerCase(), message: match[5].trim() });
+    if (diagnostics.length >= 50) break;
+  }
+  return diagnostics;
+}
+
 /** Parse a legacy command string without invoking a shell. New contracts should use argv arrays. */
 export function normalizeCommand(command) {
   if (Array.isArray(command)) {
@@ -57,17 +86,17 @@ export function runCommand(command, options = {}) {
   const proc = spawnSync(argv[0], argv.slice(1), {
     cwd: options.cwd || process.cwd(), encoding: 'utf8', timeout,
     maxBuffer: options.maxBuffer || 10 * 1024 * 1024,
-    env: { ...process.env, ...(options.env || {}) }, shell: false
+    env: sanitizedEnvironment(options.env || {}, { inheritSensitive: options.inheritSensitiveEnv === true }), shell: false
   });
-  const stdout = proc.stdout || '';
-  const stderr = proc.stderr || '';
+  const stdout = options.redactLogs === false ? (proc.stdout || '') : redactSensitive(proc.stdout || '');
+  const stderr = options.redactLogs === false ? (proc.stderr || '') : redactSensitive(proc.stderr || '');
   const exitCode = proc.status !== null ? proc.status : 1;
-  let error = proc.error?.message;
+  let error = proc.error?.message ? redactSensitive(proc.error.message) : undefined;
   if (proc.error?.code === 'ETIMEDOUT') error = `Command timed out after ${timeout}ms`;
   else if (exitCode !== 0 && !error) error = `Command exited with non-zero code ${exitCode}`;
   return {
     success: proc.status === 0 && !proc.error,
     cmd: displayCommand(command), argv, exitCode, stdout, stderr,
-    summary: summarizeFailure(stdout, stderr), error
+    summary: summarizeFailure(stdout, stderr), diagnostics: parseDiagnostics(stdout, stderr), error
   };
 }

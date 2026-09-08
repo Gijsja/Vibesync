@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { getFeature } from './features.mjs';
 import { claimTask, getTask, releaseTaskLease, hydrateActiveTaskAnchor } from './tasks.mjs';
-import { runCommand } from './commands.mjs';
+import { executeGates } from './gatekeeper.mjs';
 
 function git(cwd, args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
@@ -56,13 +56,18 @@ export function startTask({ taskId, actorName = 'human' }, db, repoRoot) {
     db.prepare('UPDATE tasks SET worktree_path = ?, base_commit = ? WHERE id = ?').run(worktreePath, baseCommit, taskId);
     const scopedTask = getTask(taskId, db);
     const preCommitHookPath = installScopeHook(worktreePath, scopedTask.allowed_paths);
-    for (const command of scopedTask.setup || []) {
-      const setupResult = runCommand(command, { cwd: worktreePath });
-      if (!setupResult.success) throw new Error(`Worktree setup failed: ${setupResult.summary || setupResult.error}`);
+    if ((scopedTask.setup || []).length) {
+      const setupResult = executeGates(scopedTask.setup, { cwd: worktreePath, db, taskId, actorName, repoRoot, phase: 'setup' });
+      if (!setupResult.success) {
+        const error = new Error(`Worktree setup failed: ${setupResult.failedGate?.summary || setupResult.failedGate?.error || 'unknown error'}`);
+        error.code = setupResult.failedGate?.code || 'SETUP_FAILED';
+        throw error;
+      }
     }
     const activeTaskAnchorPath = hydrateActiveTaskAnchor(worktreePath, getTask(taskId, db), getFeature(task.feature_id, db));
     checkpointState(db);
-    return { success: true, task: getTask(taskId, db), worktreePath, activeTaskAnchorPath, preCommitHookPath };
+    return { success: true, task: getTask(taskId, db), worktreePath, activeTaskAnchorPath, preCommitHookPath,
+      leaseToken: result.leaseToken, heartbeatMinutes: result.heartbeatMinutes, modelProfile: result.modelProfile };
   } catch (err) {
     releaseTaskLease(taskId, db);
     throw err;

@@ -9,6 +9,8 @@ import { getDb, recordSettlementEvent, checkpointState, saveArtifact } from './d
 import { execGitWithBackoff } from './incubator.mjs';
 import { FEATURE_STATUSES, PRIORITY_LEVELS } from './config.mjs';
 import { runCommand } from './commands.mjs';
+import { randomUUID } from 'node:crypto';
+import { resolveCommandSpec, requireCommandApproval, prepareSandboxedCommand, identifyModelProfile, getExecutionPolicy } from './policy.mjs';
 
 /**
  * Validates feature identifier syntax.
@@ -35,7 +37,7 @@ export function generateNextFeatureId(db = getDb()) {
 export function deserializeFeature(row) {
   if (!row) return null;
   let holisticGate = row.holistic_gate_cmd;
-  if (typeof holisticGate === 'string' && holisticGate.startsWith('[')) {
+  if (typeof holisticGate === 'string' && (holisticGate.startsWith('[') || holisticGate.startsWith('{'))) {
     try { holisticGate = JSON.parse(holisticGate); } catch {}
   }
   return {
@@ -95,7 +97,8 @@ export function createFeature(params, db = getDb()) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  stmt.run(id, title, target_milestone, status, priority, labelsJson, external_ref, spec_markdown, Array.isArray(holistic_gate_cmd) ? JSON.stringify(holistic_gate_cmd) : holistic_gate_cmd);
+  stmt.run(id, title, target_milestone, status, priority, labelsJson, external_ref, spec_markdown,
+    holistic_gate_cmd && typeof holistic_gate_cmd === 'object' ? JSON.stringify(holistic_gate_cmd) : holistic_gate_cmd);
 
   recordSettlementEvent(db, {
     feature_id: id,
@@ -255,14 +258,24 @@ export function settleFeature(params, db = getDb(), repoRoot = process.cwd()) {
   }
 
   // 2. Holistic Gate Command Execution
-  if (feature.holistic_gate_cmd && (Array.isArray(feature.holistic_gate_cmd) || feature.holistic_gate_cmd.trim() !== '')) {
-    const proc = runCommand(feature.holistic_gate_cmd, { cwd: repoRoot, timeoutMs: 300000 });
+  if (feature.holistic_gate_cmd && (typeof feature.holistic_gate_cmd !== 'string' || feature.holistic_gate_cmd.trim() !== '')) {
+    const spec = resolveCommandSpec(feature.holistic_gate_cmd, { cwd: repoRoot, phase: 'feature' });
+    const approval = requireCommandApproval(spec, db, repoRoot);
+    const sandbox = prepareSandboxedCommand(spec, repoRoot, repoRoot);
+    const started = Date.now();
+    const proc = runCommand(sandbox.argv, { cwd: repoRoot, timeoutMs: spec.timeout_ms || 300000, redactLogs: getExecutionPolicy(repoRoot).redact_logs !== false });
+    const durationMs = Date.now() - started;
+    const runArtifact = proc.success ? null : saveArtifact(JSON.stringify({ stdout: proc.stdout, stderr: proc.stderr, diagnostics: proc.diagnostics }, null, 2), repoRoot);
+    db.prepare(`INSERT INTO gate_runs (id, feature_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash)
+      VALUES (?, ?, 'feature', 0, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(randomUUID(), featureId, spec.policyHash, actorName, identifyModelProfile(actorName).id, proc.success ? 'passed' : 'failed', proc.exitCode, durationMs, proc.summary || null, runArtifact);
+    if (spec.idempotency === 'unsafe' && approval.approved) db.prepare('UPDATE gate_approvals SET revoked_at = CURRENT_TIMESTAMP WHERE policy_hash = ?').run(spec.policyHash);
 
     if (!proc.success) {
       const output = (proc.stderr || '') + '\n' + (proc.stdout || '') + (proc.error ? `\nError: ${proc.error}` : '');
       let artifactHash = null;
       try {
-        artifactHash = saveArtifact(output, repoRoot);
+        artifactHash = runArtifact || saveArtifact(output, repoRoot);
       } catch {}
 
       recordSettlementEvent(db, {

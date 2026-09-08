@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 export const STATE_REF = 'refs/heads/vibesync/state';
-export const STATE_TABLES = ['features', 'tasks', 'incubator', 'settlement_events', 'operations'];
+export const STATE_TABLES = ['features', 'tasks', 'incubator', 'settlement_events', 'operations', 'gate_approvals', 'gate_runs'];
 const roots = new WeakMap();
 export function registerStateRoot(db, root) { roots.set(db, root); }
 function git(root, args, input) {
@@ -27,7 +27,7 @@ export function checkpointState(db, explicitRoot) {
       for (const table of STATE_TABLES) tables[table] = db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all();
     } finally { db.exec('RELEASE checkpoint_read'); }
     const entries = [];
-    const artifacts = [...new Set(tables.settlement_events.map(event => event.artifact_hash).filter(hash => /^[a-f0-9]{12}$/.test(hash || '')))];
+    const artifacts = [...new Set([...tables.settlement_events, ...tables.gate_runs].map(event => event.artifact_hash).filter(hash => /^[a-f0-9]{12}$/.test(hash || '')))];
     for (const hash of artifacts) {
       const file = path.join(root, '.vibesync', 'artifacts', `${hash}.log`);
       if (!fs.existsSync(file) || !fs.lstatSync(file).isFile()) continue;
@@ -54,11 +54,12 @@ export function readStateCheckpoint(root) {
   let commit;
   try { commit = git(root, ['rev-parse', '--verify', STATE_REF]).trim(); } catch { return null; }
   const payload = JSON.parse(git(root, ['show', `${commit}:state.json`]));
-  if (payload.version !== 1 || !payload.tables || STATE_TABLES.some(table => !Array.isArray(payload.tables[table]))) {
+  if (payload.version !== 1 || !payload.tables || ['features', 'tasks', 'incubator', 'settlement_events', 'operations'].some(table => !Array.isArray(payload.tables[table]))) {
     throw new Error('Unsupported or invalid VibeSync state checkpoint. Existing database was not changed.');
   }
+  for (const table of ['gate_approvals', 'gate_runs']) if (!Array.isArray(payload.tables[table])) payload.tables[table] = [];
   const logs = {};
-  const hashes = new Set(payload.tables.settlement_events.map(row => row.artifact_hash).filter(hash => /^[a-f0-9]{12}$/.test(hash || '')));
+  const hashes = new Set([...payload.tables.settlement_events, ...payload.tables.gate_runs].map(row => row.artifact_hash).filter(hash => /^[a-f0-9]{12}$/.test(hash || '')));
   for (const hash of hashes) {
     try { logs[hash] = git(root, ['show', `${commit}:${hash}.log`]); } catch {}
   }
@@ -68,7 +69,7 @@ export function readStateCheckpoint(root) {
 export function restoreStateCheckpoint(db, root, checkpoint) {
   db.exec('BEGIN IMMEDIATE');
   try {
-    for (const table of ['operations', 'settlement_events', 'incubator', 'tasks', 'features']) db.exec(`DELETE FROM ${table}`);
+    for (const table of ['gate_runs', 'gate_approvals', 'operations', 'settlement_events', 'incubator', 'tasks', 'features']) db.exec(`DELETE FROM ${table}`);
     for (const table of STATE_TABLES) {
       const valid = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(col => col.name));
       for (const row of checkpoint.tables[table]) {

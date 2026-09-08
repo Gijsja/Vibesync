@@ -52,6 +52,16 @@ export const DEFAULT_PROVIDERS = Object.freeze([
     color: '#60a5fa',
     limit5h: 100,
     unit: 'req'
+  },
+  {
+    id: 'local',
+    name: 'Local Model',
+    actorName: 'local-model',
+    aliases: ['local-model', 'ollama', 'lmstudio', 'llama', 'mistral', 'qwen'],
+    icon: '🏠',
+    color: '#f59e0b',
+    limit5h: 0,
+    unit: 'local'
   }
 ]);
 

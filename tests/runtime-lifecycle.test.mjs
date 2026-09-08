@@ -18,8 +18,11 @@ test('real stdio runtime supports discovery and exits when its client closes', a
     initializeWorkspace(root);
     await client.connect(transport);
     const tools = (await client.listTools()).tools;
-    assert.equal(tools.length, 5);
+    assert.equal(tools.length, 8);
     assert.ok(tools.some(tool => tool.name === 'vibesync_list_ready_tasks'));
+    assert.ok(tools.some(tool => tool.name === 'vibesync_preview_task'));
+    assert.ok(tools.some(tool => tool.name === 'vibesync_preview_feature'));
+    assert.ok(tools.some(tool => tool.name === 'vibesync_heartbeat_task'));
     assert.ok(!tools.some(tool => tool.name === 'vibesync_repair_state'));
     const ready = await client.callTool({ name: 'vibesync_list_ready_tasks', arguments: {} });
     assert.equal(JSON.parse(ready.content[0].text).count, 0);

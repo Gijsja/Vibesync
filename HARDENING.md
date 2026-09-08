@@ -1,9 +1,9 @@
 # Hardening notes
 
-VibeSync is a local, trusted-workspace tool. Its HTTP API should remain bound to
-loopback. Local programs and MCP clients have access to privileged actions;
-required gates are intentionally executable commands supplied by trusted users.
-This change does not introduce authentication for remote or multi-user hosting.
+VibeSync is a local tool and its HTTP API should remain bound to loopback. This
+does not introduce authentication for remote or multi-user hosting. Command
+approval is deliberately exposed through the administrator MCP surface, not the
+unauthenticated local HTTP API.
 
 ## Enforced boundaries
 
@@ -29,9 +29,28 @@ This change does not introduce authentication for remote or multi-user hosting.
   restoration failures instead of silently discarding developer changes.
 - Background verification is serialized per workspace. Interrupted jobs are
   recorded as failures; gate results and inspector logs use recorded evidence.
+- Task setup, verification gates, and holistic feature gates share structured
+  command resolution, hash-bound approvals, sanitized inherited environments,
+  redacted logs, diagnostics, runtime records, and optional Bubblewrap isolation.
+- Approval hashes include resolved npm script content, so editing a package script
+  invalidates its prior approval. Non-idempotent commands consume their approval.
+- Gemini, Claude, Codex, and local-model profiles affect suitability, heartbeat
+  cadence, lease duration, and resource guidance only—not authorization.
+- Lease heartbeats require the current actor and opaque claim token. Expired or
+  reassigned leases reject stale heartbeats, and settlement/release clears tokens.
+- High-confidence secret patterns are rejected before task settlement and direct
+  hotfix staging; findings identify file and category without echoing the secret.
 - Repair restores durable Git snapshots into a replacement database, preserving
   backups of the original database and its sidecars.
 - Initialization preserves existing MCP bindings, dashboards, and user files.
+
+## Command-policy rollout
+
+The compatibility default is `approval_mode: audit` with `sandbox_mode: process`.
+This records unapproved commands while existing projects migrate. Set approval
+mode to `enforce` to fail closed. Set sandbox mode to `required` to fail closed
+unless Bubblewrap filesystem/network containment is usable. Structured command
+profiles reduce ambiguity but do not make test code intrinsically trustworthy.
 
 ## Verification
 

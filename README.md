@@ -15,7 +15,7 @@ light/dark dashboard and animated pixel agent room make the process easy to foll
 - **Keep good ideas without derailing a task.** Park discoveries in an incubator,
   merge related ideas, and promote them when you are ready.
 - **Give agents clear boundaries.** Tasks carry acceptance context, allowed paths,
-  required checks, and a 45-minute ownership lease.
+  structured checks, model-suitability hints, and renewable owner-token leases.
 - **Work in parallel.** Each started task gets an isolated branch and worktree.
 - **Verify before merging.** Run actual test, lint, or build commands, check scope
   and conflicts, then squash passing work into `main` or `master`.
@@ -55,8 +55,10 @@ It creates no sample tasks and does not stage your source files.
 ## Your first workflow
 
 1. **Create a feature:** describe the outcome and its acceptance criteria.
-2. **Add a task:** choose allowed paths and enter one shell-free gate command per line.
-3. **Start it:** pick an owner and open the displayed worktree in your editor or agent.
+2. **Add a task:** choose allowed paths, checks, and an optional Gemini, Claude,
+   Codex, or local-model suitability hint.
+3. **Preview and start it:** inspect resolved commands and approvals, pick an owner,
+   and open the displayed worktree in your editor or agent.
 4. **Build and verify:** make your changes, then choose **Verify & settle**.
 5. **Finish the feature:** once every task has settled, run its final feature gate.
 
@@ -75,11 +77,37 @@ with `npm start -- --mcp-role admin`; they create contracts, curate insights,
 settle features, and repair state. See the
 [usage guide](docs/USAGE.md) for details.
 
+Before claiming, workers can call `vibesync_preview_task`. The preview identifies
+the model family from the actor name, reports whether it matches `model_hint`,
+resolves structured gates, and shows approval hashes and historical runtime. A
+claim returns an opaque lease token; long-running agents should renew it with
+`vibesync_heartbeat_task`. Local-model actors receive a shorter recommended
+heartbeat cadence and a longer renewable lease, without receiving broader command
+permissions. Approvals are available only on the administrator MCP surface.
+
+Projects can opt into fail-closed command approval with
+`.vibesync/policy.json`:
+
+```json
+{
+  "approval_mode": "enforce",
+  "sandbox_mode": "required",
+  "network_default": false
+}
+```
+
+`sandbox_mode` accepts `process`, `auto`, or `required`. Process mode sanitizes
+sensitive inherited environment variables and enforces time/output limits but is
+not an OS security boundary. Auto/required use Bubblewrap when the host supports
+it; required mode refuses execution when containment is unavailable.
+
 ## A few useful boundaries
 
-VibeSync is a **trusted local development tool**. Gate commands run with your user
-permissions; review commands before running unfamiliar projects. Keep the HUD on
-loopback. The hotfix action stages workspace changes, so inspect its preview.
+VibeSync is a **trusted local development tool**. The default process sandbox is
+hardening, not full isolation; use enforced approvals and required Bubblewrap for
+less-trusted projects or models. Scope checks cannot prevent reads or network
+exfiltration without OS containment. Keep the HUD on loopback. Hotfix preview and
+settlement scan changed files for high-confidence secret patterns before commit.
 
 The activity panel estimates local activity, not provider billing or account
 quotas. Recovery restores recorded state; separately back up uncommitted source
