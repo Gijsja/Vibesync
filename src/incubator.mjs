@@ -27,8 +27,10 @@ export const VALID_STATUSES = Object.freeze([
 ]);
 
 /**
- * Resolves appropriate Git environment variables including author/committer
- * fallbacks and directory resolution.
+ * Resolves author and committer fallbacks without changing the repository a
+ * command addresses. In particular, a sibling `.git_repo` must never replace
+ * the active checkout's `.git` directory: that can make worktree commands
+ * operate on an unrelated repository history.
  */
 function resolveGitEnv(cwd, extraEnv = {}) {
   const merged = {
@@ -40,22 +42,6 @@ function resolveGitEnv(cwd, extraEnv = {}) {
     ...extraEnv
   };
 
-  if (!merged.GIT_DIR) {
-    try {
-      const gitDir = path.join(cwd, '.git');
-      const gitRepo = path.join(cwd, '.git_repo');
-      if (fs.existsSync(gitRepo)) {
-        try {
-          const testFile = path.join(gitDir, '.write_test_' + Date.now());
-          fs.writeFileSync(testFile, '');
-          fs.unlinkSync(testFile);
-        } catch {
-          merged.GIT_DIR = gitRepo;
-          merged.GIT_WORK_TREE = cwd;
-        }
-      }
-    } catch {}
-  }
   return merged;
 }
 

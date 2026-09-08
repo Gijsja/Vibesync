@@ -661,8 +661,9 @@
     .workflow-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
     .workflow-title { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: .3px; }
     .workflow-live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-    .workflow-body { background: var(--panel-hover); padding: 12px; min-height: 96px; overflow: auto; }
-    .workflow-body svg { display: block; min-width: 100%; height: auto; }
+    .workflow-body { background: var(--panel-hover); padding: 6px; min-height: 72px; overflow: auto; }
+    .workflow-body svg { display: block; width: 100%; min-width: 0; height: auto; }
+    .workflow-body .label { font-size: 11px; }
     .workflow-body .node { cursor: pointer; }
     .workflow-body .node:focus-visible rect, .workflow-body .node:focus-visible polygon { stroke: var(--accent); stroke-width: 4px; }
     .workflow-legend { display: flex; gap: 9px; flex-wrap: wrap; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 10px; color: var(--text-muted); }
@@ -1017,6 +1018,9 @@
       border-radius: 5px;
       border-left: 3px solid var(--border-light);
     }
+    .feature-contract { margin-top: 7px; }
+    .feature-contract summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+    .feature-contract-body { margin-top: 7px; white-space: pre-wrap; font-size: 11px; color: var(--text-muted); }
 
     /* Progress bar */
     .progress-bar-wrap {
@@ -2018,7 +2022,7 @@
             <!-- Idea Mode Form Fields -->
             <div class="scratchpad-fields" id="fields-idea">
               <div class="scratchpad-row">
-                <input type="text" id="scratch-idea-title" class="scratchpad-input-title" placeholder="💡 What's on your mind? (e.g. Optimize WebAudio Spatial Panning)" oninput="detectScratchpadIntent(this.value)" />
+                <input type="text" id="scratch-idea-title" class="scratchpad-input-title" placeholder="💡 What's on your mind? (e.g. Improve task verification feedback)" oninput="detectScratchpadIntent(this.value)" />
                 <select id="scratch-idea-category" class="form-control-sm" title="Idea Category">
                   <option value="speculative_feature">Speculative Feature</option>
                   <option value="architecture_insight">Architecture Insight</option>
@@ -2127,7 +2131,7 @@
       <div class="modal-body">
         <div class="form-group">
           <label>Idea Title</label>
-          <input type="text" id="park-title" class="form-control" placeholder="e.g. Optimize WebAudio Spatial Panning" />
+          <input type="text" id="park-title" class="form-control" placeholder="e.g. Improve task verification feedback" />
         </div>
         <div class="form-group">
           <label>Category</label>
@@ -2332,8 +2336,9 @@
       <div class="modal-header"><div class="modal-title">Start a task</div><button class="modal-close" aria-label="Close" onclick="closeModal('claim-task-modal')">&times;</button></div>
       <div class="modal-body">
         <p id="claim-task-title"></p><input type="hidden" id="claim-task-id" />
-        <div class="form-group"><label for="claim-actor">Lease owner</label><select class="form-control" id="claim-actor"><option value="openai-codex">OpenAI Codex</option><option value="gemini-antigravity">Gemini / Antigravity</option><option value="anthropic-claude">Anthropic Claude</option><option value="deepseek-coder">DeepSeek</option><option value="human">Human</option></select></div>
-        <p style="color:var(--text-muted)">Creates an isolated Git worktree and a 45-minute lease. Open that directory in your agent or editor. Starting a task does not launch an AI agent.</p>
+        <div class="form-group"><label for="claim-actor">Lease owner</label><select class="form-control" id="claim-actor" onchange="loadClaimPreview()"><option value="openai-codex">OpenAI Codex</option><option value="gemini-antigravity">Gemini / Antigravity</option><option value="anthropic-claude">Anthropic Claude</option><option value="deepseek-coder">DeepSeek</option><option value="human">Human</option></select></div>
+        <div id="claim-preview" class="terminal-box" style="white-space:pre-wrap;max-height:160px;overflow:auto;margin:12px 0">Loading task preview…</div>
+        <p style="color:var(--text-muted)">Creates an isolated Git worktree and lease. Open that directory in your agent or editor. Starting a task does not launch an AI agent.</p>
       </div>
       <div class="modal-footer"><button onclick="closeModal('claim-task-modal')">Cancel</button><button class="btn-primary" id="claim-submit" onclick="submitClaimTask()">Create workspace &amp; claim</button></div>
     </div>
@@ -2507,6 +2512,13 @@
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    function featureSummary(spec) {
+      const text = String(spec || '').trim();
+      const goal = text.match(/(?:^|\n)Goal:\s*([\s\S]*?)(?=\n(?:Source:|Execution order:|TASK-)|$)/i)?.[1];
+      const summary = (goal || text).replace(/\s+/g, ' ').trim();
+      return summary.length > 260 ? `${summary.slice(0, 257)}…` : summary;
+    }
+
     function formatTime(isoStr) {
       if (!isoStr) return '';
       try {
@@ -2568,7 +2580,20 @@
       const sequence = ++workflowRenderSequence;
       try {
         const mermaid = await window.__vibesyncMermaidReady;
-        const { svg } = await mermaid.render(`vibesync-workflow-${sequence}`, definition.source);
+        const compactSource = definition.source.split('\n').map(line => {
+          const feature = line.match(/^(?:subgraph GROUP|F)(\d+)\[/);
+          if (feature) {
+            const currentFeature = (currentState.features || [])[Number(feature[1])];
+            return currentFeature ? line.replace(/\[[^\]]+\]/, `[${JSON.stringify(currentFeature.id)}]`) : line;
+          }
+          const task = line.match(/^T(\d+)\[/);
+          if (task) {
+            const currentTask = definition.taskNodes.find(item => item.nodeId === `T${task[1]}`);
+            return currentTask ? line.replace(/\[[^\]]+\]/, `[${JSON.stringify(`${currentTask.taskId} · ${currentTask.status.replace('_', ' ')}`)}]`) : line;
+          }
+          return line;
+        }).join('\n');
+        const { svg } = await mermaid.render(`vibesync-workflow-${sequence}`, compactSource);
         if (sequence !== workflowRenderSequence) return;
         body.innerHTML = svg;
         for (const taskNode of definition.taskNodes) {
@@ -2577,7 +2602,9 @@
           node.setAttribute('tabindex', '0');
           node.setAttribute('role', 'button');
           node.setAttribute('aria-label', `Open ${taskNode.taskId}`);
-          node.append(document.createElementNS('http://www.w3.org/2000/svg', 'title')).textContent = taskNode.tooltip;
+          const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+          title.textContent = taskNode.tooltip;
+          node.append(title);
           node.addEventListener('click', () => workflowTaskSelected(taskNode.taskId));
           node.addEventListener('keydown', event => {
             if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); node.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
@@ -2734,7 +2761,7 @@
                 </div>
               ` : ''}
 
-              ${f.spec_markdown ? `<div class="feature-spec" style="margin-top: 8px;"><strong>Contract:</strong> ${escapeHtml(f.spec_markdown)}</div>` : ''}
+              ${f.spec_markdown ? `<div class="feature-spec" style="margin-top: 8px;"><strong>Outcome:</strong> ${escapeHtml(featureSummary(f.spec_markdown))}<details class="feature-contract"><summary>Full implementation contract</summary><div class="feature-contract-body">${escapeHtml(f.spec_markdown)}</div></details></div>` : ''}
 
               <div class="progress-bar-wrap">
                 <div class="progress-bar-fill" style="width: ${progressPct}%;"></div>
@@ -2747,7 +2774,7 @@
               <div class="task-list">
                 ${childTasks.length === 0 ? '<div style="color: var(--text-muted); font-size: 11px; padding: 0.5rem 0;">No matching child tasks.</div>' : childTasks.map(t => {
                   const gates = Array.isArray(t.required_gates) ? t.required_gates : (typeof t.required_gates === 'string' ? JSON.parse(t.required_gates || '[]') : []);
-                  const gatesStr = gates.map(g => typeof g === 'string' ? g : g.cmd).join(' && ');
+                  const gatesStr = gates.map(displayCommand).join(' && ');
                   const paths = Array.isArray(t.allowed_paths) ? t.allowed_paths.join(', ') : (t.allowed_paths || '*');
                   const taskLabels = Array.isArray(t.labels) ? t.labels : (typeof t.labels === 'string' ? JSON.parse(t.labels || '[]') : []);
 
@@ -3360,6 +3387,26 @@
       const actor = document.getElementById('claim-actor');
       actor.value = task.status === 'blocked' ? 'human' : (task.assigned_actor || 'openai-codex');
       actor.disabled = task.status === 'blocked';
+      loadClaimPreview();
+    }
+    function displayCommand(command) {
+      if (typeof command === 'string') return command;
+      if (Array.isArray(command)) return command.join(' ');
+      if (Array.isArray(command?.argv)) return command.argv.map(arg => JSON.stringify(arg)).join(' ');
+      if (command?.type === 'npm-script') return `npm run ${command.script || ''}`.trim();
+      if (command?.type === 'node-test') return `node --test ${command.target || ''}`.trim();
+      return command?.cmd || command?.type || 'Unknown command';
+    }
+    async function loadClaimPreview() {
+      const taskId = document.getElementById('claim-task-id').value;
+      const preview = document.getElementById('claim-preview');
+      if (!taskId || !preview) return;
+      preview.textContent = 'Loading task preview…';
+      try {
+        const data = await postAction('/api/tasks/preview', { taskId, actorName: document.getElementById('claim-actor').value });
+        const commands = (data.commands || []).map(item => `${item.phase}: ${item.display || displayCommand(item)}${item.approval?.runnable ? '' : ' — approval required'}`);
+        preview.textContent = `${data.model?.id || 'unknown'} · ${data.suitability || 'review required'}\n${commands.join('\n') || 'No declared commands.'}`;
+      } catch (error) { preview.textContent = `Preview unavailable: ${error.message}`; }
     }
     async function submitClaimTask() {
       const button = document.getElementById('claim-submit');
@@ -3372,7 +3419,7 @@
         });
         closeModal('claim-task-modal');
         showTaskWorkspace(result.task.id);
-        notifyUser('Task leased for 45 minutes. Its isolated workspace is ready.');
+        notifyUser(`Task leased until ${result.task.lease_expires_at || 'its configured expiry'}. Its isolated workspace is ready.`);
       } catch (err) { notifyUser(err.message, true); }
       finally { button.disabled = false; }
     }
@@ -3380,7 +3427,7 @@
       const task = currentState.tasks.find(t => t.id === id);
       openModal('logs-modal');
       document.getElementById('logs-modal-title').textContent = `Workspace · ${id}`;
-      document.getElementById('terminal-content').textContent = `Work in this isolated directory:\n${task.worktree_path}\n\nBranch: ${task.branch_name}\nActor: ${task.assigned_actor || 'Unassigned'}\nLease expires: ${task.lease_expires_at || 'Released'} UTC\n\nAllowed paths: ${task.allowed_paths.join(', ')}\nRequired gates:\n${task.required_gates.map(g => typeof g === 'string' ? g : g.cmd).join('\n')}\n\nUse the VibeSync verification tool when implementation is ready.`;
+      document.getElementById('terminal-content').textContent = `Work in this isolated directory:\n${task.worktree_path}\n\nBranch: ${task.branch_name}\nActor: ${task.assigned_actor || 'Unassigned'}\nLease expires: ${task.lease_expires_at || 'Released'} UTC\n\nAllowed paths: ${task.allowed_paths.join(', ')}\nRequired gates:\n${task.required_gates.map(displayCommand).join('\n')}\n\nUse the VibeSync verification tool when implementation is ready.`;
     }
     async function verifyTask(taskId) {
       if (!await confirmAction('Run the required gates and squash passing changes into trunk? Your task workspace will be committed during settlement.')) return;

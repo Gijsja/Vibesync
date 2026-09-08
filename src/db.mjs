@@ -220,6 +220,8 @@ let _activeDbPath = null;
 export function migrateSchema(db) {
   // Ensure incubator table has updated CHECK constraints and columns
   const ddl = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='incubator'").get()?.sql || '';
+  const incubatorCols = db.prepare("PRAGMA table_info(incubator)").all().map(c => c.name);
+  const legacyUpdatedAt = incubatorCols.includes('updated_at') ? 'updated_at' : 'created_at';
   if (ddl && (!ddl.includes("'convention'") || !ddl.includes("'merged'"))) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS incubator_migrated (
@@ -241,20 +243,23 @@ export function migrateSchema(db) {
         id, title, category, target_scope, context_notes, logged_by, status, promoted_feature_id, created_at, updated_at
       )
       SELECT 
-        id, title, category, NULL, context_notes, logged_by, status, promoted_feature_id, created_at, updated_at
+        id, title, category, NULL, context_notes, logged_by, status, promoted_feature_id, created_at, ${legacyUpdatedAt}
       FROM incubator;
       DROP TABLE incubator;
       ALTER TABLE incubator_migrated RENAME TO incubator;
       CREATE INDEX IF NOT EXISTS idx_incubator_status ON incubator(status);
     `);
   } else {
-    const incubatorCols = db.prepare("PRAGMA table_info(incubator)").all().map(c => c.name);
     if (incubatorCols.length > 0) {
       if (!incubatorCols.includes('target_scope')) {
         db.exec("ALTER TABLE incubator ADD COLUMN target_scope TEXT;");
       }
       if (!incubatorCols.includes('merged_into_id')) {
         db.exec("ALTER TABLE incubator ADD COLUMN merged_into_id TEXT;");
+      }
+      if (!incubatorCols.includes('updated_at')) {
+        db.exec("ALTER TABLE incubator ADD COLUMN updated_at DATETIME;");
+        db.exec("UPDATE incubator SET updated_at = created_at WHERE updated_at IS NULL;");
       }
     }
   }
