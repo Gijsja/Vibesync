@@ -22,6 +22,16 @@ export function isValidTaskId(id) {
   return typeof id === 'string' && /^TASK-[A-Za-z0-9_.-]+$/.test(id);
 }
 
+export function generateNextTaskId(featureId, db = getDb()) {
+  const featureNumber = featureId.match(/^FEAT-(\d+)$/)?.[1] || String(
+    db.prepare('SELECT COUNT(*) AS count FROM features WHERE created_at <= (SELECT created_at FROM features WHERE id = ?)').get(featureId)?.count || 1
+  ).padStart(2, '0');
+  const prefix = `TASK-${featureNumber}.`;
+  const rows = db.prepare('SELECT id FROM tasks WHERE id LIKE ?').all(`${prefix}%`);
+  const max = rows.reduce((value, row) => Math.max(value, Number(row.id.slice(prefix.length)) || 0), 0);
+  return `${prefix}${max + 1}`;
+}
+
 /**
  * Deserializes task record fields from SQLite JSON strings.
  * 
@@ -34,6 +44,7 @@ function deserializeTask(row) {
     ...row,
     allowed_paths: typeof row.allowed_paths === 'string' ? JSON.parse(row.allowed_paths) : row.allowed_paths,
     required_gates: typeof row.required_gates === 'string' ? JSON.parse(row.required_gates) : row.required_gates,
+    setup: typeof row.setup === 'string' ? JSON.parse(row.setup) : (row.setup || []),
     labels: typeof row.labels === 'string' ? JSON.parse(row.labels) : (row.labels || [])
   };
 }
@@ -51,13 +62,14 @@ function deserializeTask(row) {
  * @param {string|null} [params.external_ref=null] - External issue tracking reference (e.g. 'GH-42', 'LIN-101')
  * @param {Array<string>} [params.allowed_paths=['*']]
  * @param {Array<string>} [params.required_gates=[]]
+ * @param {Array<string|Array<string>>} [params.setup=[]] - Commands run after managed worktree provisioning
  * @param {number} [params.max_failures=3]
  * @param {DatabaseSync} [db]
  * @returns {object} Created task record
  */
 export function createTask(params, db = getDb()) {
   const {
-    id,
+    id = generateNextTaskId(params.feature_id, db),
     feature_id,
     title,
     status = 'ready',
@@ -66,6 +78,7 @@ export function createTask(params, db = getDb()) {
     external_ref = null,
     allowed_paths = ['*'],
     required_gates = [],
+    setup = [],
     max_failures = 3
   } = params;
 
@@ -84,13 +97,14 @@ export function createTask(params, db = getDb()) {
   const allowedPathsJson = Array.isArray(allowed_paths) ? JSON.stringify(allowed_paths) : allowed_paths;
   const requiredGatesJson = Array.isArray(required_gates) ? JSON.stringify(required_gates) : required_gates;
   const labelsJson = Array.isArray(labels) ? JSON.stringify(labels) : (typeof labels === 'string' ? labels : '[]');
+  const setupJson = Array.isArray(setup) ? JSON.stringify(setup) : setup;
 
   const stmt = db.prepare(`
-    INSERT INTO tasks (id, feature_id, title, status, priority, labels, external_ref, allowed_paths, required_gates, max_failures)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (id, feature_id, title, status, priority, labels, external_ref, allowed_paths, required_gates, setup, max_failures)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  stmt.run(id, feature_id, title, status, priority, labelsJson, external_ref, allowedPathsJson, requiredGatesJson, max_failures);
+  stmt.run(id, feature_id, title, status, priority, labelsJson, external_ref, allowedPathsJson, requiredGatesJson, setupJson, max_failures);
 
   checkpointState(db);
   return getTask(id, db);
@@ -314,7 +328,7 @@ ${gatesList}
     const excludePath = execGitWithBackoff(['rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'], { cwd: worktreePath });
     fs.mkdirSync(path.dirname(excludePath), { recursive: true });
     const existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf8') : '';
-    const missing = ['.vibesync_ACTIVE_TASK.md', '.vibesync/worktrees/'].filter(line => !existing.split('\n').includes(line));
+    const missing = ['.vibesync_ACTIVE_TASK.md', '.vibesync/worktrees/', '.vibesync/hooks/'].filter(line => !existing.split('\n').includes(line));
     if (missing.length) fs.appendFileSync(excludePath, '\n' + missing.join('\n') + '\n');
   } catch { /* Plain directories can still receive an anchor before Git setup. */ }
   return anchorPath;
@@ -510,4 +524,3 @@ export function ejectTaskToHuman(taskId, db = getDb(), repoRoot = process.cwd())
 
   return getTask(taskId, db);
 }
-

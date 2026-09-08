@@ -13,7 +13,7 @@ test('starting a task provisions its real branch, preserves work on release and 
   await withSandbox(async sandbox => {
     const db = getDb(path.join(sandbox.dir, '.vibesync/state.db'), sandbox.dir);
     createFeature({ id: 'FEAT-WORK', title: 'Workspace', target_milestone: 'v1', spec_markdown: 'Scoped implementation' }, db);
-    createTask({ id: 'TASK-WORK', feature_id: 'FEAT-WORK', title: 'Implement', allowed_paths: ['src/**'], required_gates: ['git diff --check'] }, db);
+    createTask({ id: 'TASK-WORK', feature_id: 'FEAT-WORK', title: 'Implement', allowed_paths: ['src/**'], required_gates: ['git diff --check'], setup: [['node', '-e', "require('fs').mkdirSync('src',{recursive:true});require('fs').writeFileSync('src/setup.txt','ready')"]] }, db);
     const started = startTask({ taskId: 'TASK-WORK', actorName: 'openai-codex' }, db, sandbox.dir);
     assert.equal(started.task.worktree_path, started.worktreePath);
     const anchor = fs.readFileSync(started.activeTaskAnchorPath, 'utf8');
@@ -23,6 +23,8 @@ test('starting a task provisions its real branch, preserves work on release and 
     assert.ok(anchor.includes(started.task.lease_expires_at));
     assert.ok(anchor.includes(started.task.base_commit));
     assert.equal(execFileSync('git', ['branch', '--show-current'], { cwd: started.worktreePath, encoding: 'utf8' }).trim(), started.task.branch_name);
+    assert.equal(fs.readFileSync(path.join(started.worktreePath, 'src/setup.txt'), 'utf8'), 'ready');
+    assert.equal(fs.statSync(started.preCommitHookPath).mode & 0o111, 0o111);
     fs.writeFileSync(path.join(started.worktreePath, 'unfinished.txt'), 'keep my work');
     assert.throws(() => startTask({ taskId: 'TASK-WORK', actorName: 'other' }, db, sandbox.dir), /in_progress/);
     releaseTaskLease('TASK-WORK', db);

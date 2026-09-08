@@ -5,12 +5,12 @@
  * Milestone 2: Git Judicial Harness (Features 16–19)
  */
 
-import { spawnSync } from 'node:child_process';
 import { getDb, recordSettlementEvent, saveArtifact } from './db.mjs';
 import { getTask } from './tasks.mjs';
 import { checkScopeBoundary } from './guard.mjs';
 import { execGitWithBackoff } from './incubator.mjs';
 import { MAX_FAILURES } from './config.mjs';
+import { runCommand } from './commands.mjs';
 
 /**
  * Resolves current Git HEAD commit SHA safely.
@@ -51,47 +51,7 @@ export function runGateCommand(cmd, cwdOrOptions = process.cwd(), options = {}) 
   const maxBuffer = opts.maxBuffer || 10 * 1024 * 1024;
   const env = opts.env || {};
 
-  if (typeof cmd !== 'string' || !cmd.trim()) {
-    return {
-      success: false,
-      cmd: cmd || '',
-      exitCode: 1,
-      stdout: '',
-      stderr: 'Invalid or empty gate command',
-      error: 'Invalid or empty gate command'
-    };
-  }
-
-  const proc = spawnSync(cmd, {
-    cwd,
-    shell: true,
-    encoding: 'utf8',
-    timeout,
-    maxBuffer,
-    env: { ...process.env, ...env }
-  });
-
-  const stdout = proc.stdout || '';
-  const stderr = proc.stderr || '';
-  const exitCode = proc.status !== null ? proc.status : (proc.error ? 1 : 0);
-  let errorMsg = proc.error ? proc.error.message : null;
-
-  if (proc.error && proc.error.code === 'ETIMEDOUT') {
-    errorMsg = `Gate command timed out after ${timeout}ms`;
-  } else if (exitCode !== 0 && !errorMsg) {
-    errorMsg = `Gate command exited with non-zero code ${exitCode}`;
-  }
-
-  const success = proc.status === 0 && !proc.error;
-
-  return {
-    success,
-    cmd,
-    exitCode,
-    stdout,
-    stderr,
-    error: errorMsg || undefined
-  };
+  return runCommand(cmd, { cwd, timeoutMs: timeout, maxBuffer, env });
 }
 
 // Aliases for runGateCommand
@@ -136,16 +96,16 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
   for (const gate of gatesList) {
     const res = runGateCommand(gate, cwd, opts);
     if (!res.success) {
+      const failedGate = { cmd: res.cmd, argv: res.argv, exitCode: res.exitCode, summary: res.summary, error: res.error };
       return {
         success: false,
         pass: false,
         gatesRun,
-        failedGate: res,
+        failedGate,
         errorPayload: {
           cmd: res.cmd,
           exitCode: res.exitCode,
-          stdout: res.stdout,
-          stderr: res.stderr,
+          failure: res.summary,
           error: res.error
         }
       };

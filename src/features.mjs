@@ -5,10 +5,10 @@
  * Milestone 1: 3-Tier State Engine & Persistence
  */
 
-import { spawnSync } from 'node:child_process';
 import { getDb, recordSettlementEvent, checkpointState, saveArtifact } from './db.mjs';
 import { execGitWithBackoff } from './incubator.mjs';
 import { FEATURE_STATUSES, PRIORITY_LEVELS } from './config.mjs';
+import { runCommand } from './commands.mjs';
 
 /**
  * Validates feature identifier syntax.
@@ -20,6 +20,12 @@ export function isValidFeatureId(id) {
   return typeof id === 'string' && /^FEAT-[A-Za-z0-9_.-]+$/.test(id);
 }
 
+export function generateNextFeatureId(db = getDb()) {
+  const ids = db.prepare("SELECT id FROM features WHERE id LIKE 'FEAT-%'").all();
+  const max = ids.reduce((value, row) => Math.max(value, Number(row.id.match(/^FEAT-(\d+)$/)?.[1] || 0)), 0);
+  return `FEAT-${String(max + 1).padStart(2, '0')}`;
+}
+
 /**
  * Deserializes feature record fields from SQLite JSON strings.
  * 
@@ -28,8 +34,13 @@ export function isValidFeatureId(id) {
  */
 export function deserializeFeature(row) {
   if (!row) return null;
+  let holisticGate = row.holistic_gate_cmd;
+  if (typeof holisticGate === 'string' && holisticGate.startsWith('[')) {
+    try { holisticGate = JSON.parse(holisticGate); } catch {}
+  }
   return {
     ...row,
+    holistic_gate_cmd: holisticGate,
     labels: typeof row.labels === 'string' ? JSON.parse(row.labels) : (row.labels || [])
   };
 }
@@ -53,7 +64,7 @@ export function deserializeFeature(row) {
  */
 export function createFeature(params, db = getDb()) {
   const {
-    id,
+    id = generateNextFeatureId(db),
     title,
     target_milestone,
     spec_markdown,
@@ -84,7 +95,7 @@ export function createFeature(params, db = getDb()) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  stmt.run(id, title, target_milestone, status, priority, labelsJson, external_ref, spec_markdown, holistic_gate_cmd);
+  stmt.run(id, title, target_milestone, status, priority, labelsJson, external_ref, spec_markdown, Array.isArray(holistic_gate_cmd) ? JSON.stringify(holistic_gate_cmd) : holistic_gate_cmd);
 
   recordSettlementEvent(db, {
     feature_id: id,
@@ -244,16 +255,11 @@ export function settleFeature(params, db = getDb(), repoRoot = process.cwd()) {
   }
 
   // 2. Holistic Gate Command Execution
-  if (feature.holistic_gate_cmd && feature.holistic_gate_cmd.trim() !== '') {
-    const proc = spawnSync(feature.holistic_gate_cmd, {
-      shell: true,
-      cwd: repoRoot,
-      encoding: 'utf8',
-      timeout: 300000
-    });
+  if (feature.holistic_gate_cmd && (Array.isArray(feature.holistic_gate_cmd) || feature.holistic_gate_cmd.trim() !== '')) {
+    const proc = runCommand(feature.holistic_gate_cmd, { cwd: repoRoot, timeoutMs: 300000 });
 
-    if (proc.status !== 0 || proc.error) {
-      const output = (proc.stderr || '') + '\n' + (proc.stdout || '') + (proc.error ? `\nError: ${proc.error.message}` : '');
+    if (!proc.success) {
+      const output = (proc.stderr || '') + '\n' + (proc.stdout || '') + (proc.error ? `\nError: ${proc.error}` : '');
       let artifactHash = null;
       try {
         artifactHash = saveArtifact(output, repoRoot);
@@ -267,12 +273,12 @@ export function settleFeature(params, db = getDb(), repoRoot = process.cwd()) {
         artifact_hash: artifactHash,
         evidence_payload: {
           command: feature.holistic_gate_cmd,
-          exit_code: proc.status,
-          error: output.slice(0, 1000)
+          exit_code: proc.exitCode,
+          error: proc.summary
         }
       });
 
-      throw new Error(`Holistic feature gate failed (exit code ${proc.status}): ${output.slice(0, 500)}`);
+      throw new Error(`Holistic feature gate failed (exit code ${proc.exitCode}): ${proc.summary || proc.error}`);
     }
   }
 

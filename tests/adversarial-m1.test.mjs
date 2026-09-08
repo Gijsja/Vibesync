@@ -404,7 +404,7 @@ describe('Adversarial Milestone 1 Suite', () => {
         title: 'Failing Gate Feature',
         target_milestone: 'v1.0',
         spec_markdown: 'S',
-        holistic_gate_cmd: 'echo "Critical test failure on line 42" >&2 && exit 7'
+        holistic_gate_cmd: ['bash', '-c', 'echo "Critical test failure on line 42" >&2 && exit 7']
       }, db);
       createTask({ id: 'TASK-HG1', feature_id: 'FEAT-HG-FAIL', title: 'Settled Task', status: 'settled' }, db);
 

@@ -4,9 +4,22 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { getFeature } from './features.mjs';
 import { claimTask, getTask, releaseTaskLease, hydrateActiveTaskAnchor } from './tasks.mjs';
+import { runCommand } from './commands.mjs';
 
 function git(cwd, args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+}
+
+function installScopeHook(worktreePath, allowedPaths) {
+  git(worktreePath, ['config', 'extensions.worktreeConfig', 'true']);
+  git(worktreePath, ['config', '--worktree', 'core.hooksPath', '.vibesync/hooks']);
+  const hooksDir = path.join(worktreePath, '.vibesync', 'hooks');
+  fs.mkdirSync(hooksDir, { recursive: true });
+  const hookPath = path.join(hooksDir, 'pre-commit');
+  const guardUrl = new URL('./guard.mjs', import.meta.url).href;
+  const script = `#!/bin/sh\nexec node --input-type=module -e 'import { checkScopeBoundary } from ${JSON.stringify(guardUrl)}; const allowed=JSON.parse(process.argv[1]); const result=checkScopeBoundary(process.cwd(), allowed, { stagedOnly:true }); if(!result.valid){ console.error("VibeSync scope violation. Commit blocked:"); console.error(result.violations.join("\\n")); process.exit(1); }' '${JSON.stringify(allowedPaths).replace(/'/g, "'\\''")}'\n`;
+  fs.writeFileSync(hookPath, script, { encoding: 'utf8', mode: 0o755 });
+  return hookPath;
 }
 
 export function getTrunk(repoRoot) {
@@ -38,9 +51,15 @@ export function startTask({ taskId, actorName = 'human' }, db, repoRoot) {
     }
     const baseCommit = git(repoRoot, ['merge-base', trunk, branch]);
     db.prepare('UPDATE tasks SET worktree_path = ?, base_commit = ? WHERE id = ?').run(worktreePath, baseCommit, taskId);
+    const scopedTask = getTask(taskId, db);
+    const preCommitHookPath = installScopeHook(worktreePath, scopedTask.allowed_paths);
+    for (const command of scopedTask.setup || []) {
+      const setupResult = runCommand(command, { cwd: worktreePath });
+      if (!setupResult.success) throw new Error(`Worktree setup failed: ${setupResult.summary || setupResult.error}`);
+    }
     const activeTaskAnchorPath = hydrateActiveTaskAnchor(worktreePath, getTask(taskId, db), getFeature(task.feature_id, db));
     checkpointState(db);
-    return { success: true, task: getTask(taskId, db), worktreePath, activeTaskAnchorPath };
+    return { success: true, task: getTask(taskId, db), worktreePath, activeTaskAnchorPath, preCommitHookPath };
   } catch (err) {
     releaseTaskLease(taskId, db);
     throw err;

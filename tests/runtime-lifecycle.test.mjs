@@ -17,9 +17,12 @@ test('real stdio runtime supports discovery and exits when its client closes', a
   try {
     initializeWorkspace(root);
     await client.connect(transport);
-    assert.equal((await client.listTools()).tools.length, 10);
-    const state = await client.callTool({ name: 'vibesync_get_state', arguments: {} });
-    assert.equal(JSON.parse(state.content[0].text).workspace.root, root);
+    const tools = (await client.listTools()).tools;
+    assert.equal(tools.length, 5);
+    assert.ok(tools.some(tool => tool.name === 'vibesync_list_ready_tasks'));
+    assert.ok(!tools.some(tool => tool.name === 'vibesync_repair_state'));
+    const ready = await client.callTool({ name: 'vibesync_list_ready_tasks', arguments: {} });
+    assert.equal(JSON.parse(ready.content[0].text).count, 0);
     const url = fs.readFileSync(path.join(root, '.vibesync/hud.url'), 'utf8').trim();
     assert.equal((await fetch(url + '/api/state')).status, 200);
     await client.close();

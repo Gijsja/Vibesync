@@ -280,6 +280,9 @@ export function performSquashSettlement(params) {
         execGitWithBackoff(['checkout', '--detach'], { cwd: worktreePath });
         const anchor = path.join(worktreePath, '.vibesync_ACTIVE_TASK.md');
         if (fs.existsSync(anchor)) fs.unlinkSync(anchor);
+        try { execGitWithBackoff(['config', '--worktree', '--unset', 'core.hooksPath'], { cwd: worktreePath }); } catch {}
+        const hooks = path.join(worktreePath, '.vibesync', 'hooks');
+        if (fs.existsSync(hooks)) fs.rmSync(hooks, { recursive: true, force: true });
       } catch (err) { warnings.push(`Task workspace cleanup: ${err.message}`); }
     }
     try { git(['branch', '-D', '--', task.branch_name]); } catch (err) { warnings.push(`Task branch retained: ${err.message}`); }

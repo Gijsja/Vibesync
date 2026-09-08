@@ -30,7 +30,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 
 test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
 
-  await t.test('1. MCP Tool Declarations: registers all 6 judicial tools', async () => {
+  await t.test('1. MCP Tool Declarations: registers hardened worker and admin tools', async () => {
     await withSandbox(async (sandbox) => {
       const db = getDb(path.join(sandbox.dir, '.vibesync', 'state.db'), sandbox.dir);
       const server = createMcpServer({ db, repoRoot: sandbox.dir });
@@ -48,10 +48,62 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
       assert.ok(toolNames.includes('vibesync_merge_insights'));
       assert.ok(toolNames.includes('vibesync_settle_feature'));
       assert.ok(toolNames.includes('vibesync_repair_state'));
-      assert.equal(toolNames.length, 10);
+      assert.equal(toolNames.length, 13);
       assert.ok(toolNames.includes('vibesync_create_feature'));
       assert.ok(toolNames.includes('vibesync_create_task'));
       assert.ok(toolNames.includes('vibesync_release_task'));
+      assert.ok(toolNames.includes('vibesync_list_ready_tasks'));
+      assert.ok(toolNames.includes('vibesync_get_task_detail'));
+      assert.ok(toolNames.includes('vibesync_promote_insight'));
+      for (const tool of response.tools) {
+        assert.match(tool.description, /Purpose:.*When to use:.*When NOT to use:.*Side effects:/s);
+        assert.equal(typeof tool.annotations.readOnlyHint, 'boolean');
+        assert.equal(typeof tool.annotations.destructiveHint, 'boolean');
+        assert.equal(typeof tool.annotations.idempotentHint, 'boolean');
+      }
+
+      const worker = createMcpServer({ db, repoRoot: sandbox.dir, role: 'worker' });
+      const workerTools = await worker._requestHandlers.get(ListToolsRequestSchema.shape.method.value)({ method: 'tools/list', params: {} });
+      assert.ok(workerTools.tools.some(tool => tool.name === 'vibesync_claim_task'));
+      assert.ok(!workerTools.tools.some(tool => tool.name === 'vibesync_create_task'));
+      const workerCall = worker._requestHandlers.get(CallToolRequestSchema.shape.method.value);
+      const forbidden = await workerCall({ method: 'tools/call', params: { name: 'vibesync_create_task', arguments: {} } });
+      assert.equal(JSON.parse(forbidden.content[0].text).error.code, 'ROLE_FORBIDDEN');
+      const impersonation = await workerCall({ method: 'tools/call', params: { name: 'vibesync_claim_task', arguments: { task_id: 'TASK-X', actor_name: 'human' } } });
+      assert.equal(JSON.parse(impersonation.content[0].text).error.code, 'ROLE_FORBIDDEN');
+
+      const admin = createMcpServer({ db, repoRoot: sandbox.dir, role: 'admin' });
+      const adminTools = await admin._requestHandlers.get(ListToolsRequestSchema.shape.method.value)({ method: 'tools/list', params: {} });
+      assert.ok(adminTools.tools.some(tool => tool.name === 'vibesync_create_task'));
+      assert.ok(!adminTools.tools.some(tool => tool.name === 'vibesync_claim_task'));
+    });
+  });
+
+  await t.test('server IDs, compact reads, and insight promotion', async () => {
+    await withSandbox(async sandbox => {
+      const db = getDb(path.join(sandbox.dir, '.vibesync', 'state.db'), sandbox.dir);
+      const server = createMcpServer({ db, repoRoot: sandbox.dir });
+      const call = server._requestHandlers.get(CallToolRequestSchema.shape.method.value);
+      const invoke = async (name, args) => JSON.parse((await call({ method: 'tools/call', params: { name, arguments: args } })).content[0].text);
+
+      const createdFeature = await invoke('vibesync_create_feature', { title: 'Generated feature', spec_markdown: 'Acceptance' });
+      assert.equal(createdFeature.result.id, 'FEAT-01');
+      const createdTask = await invoke('vibesync_create_task', {
+        feature_id: 'FEAT-01', title: 'Generated task', allowed_paths: ['src/**'], required_gates: [['node', '-e', 'process.exit(0)']]
+      });
+      assert.equal(createdTask.result.id, 'TASK-01.1');
+      assert.equal((await invoke('vibesync_list_ready_tasks', {})).count, 1);
+      assert.equal((await invoke('vibesync_get_task_detail', { task_id: 'TASK-01.1' })).feature.id, 'FEAT-01');
+
+      const parked = await invoke('vibesync_park_insight', {
+        title: 'Extract renderer', category: 'architecture_insight', target_scope: 'src/render/**',
+        context_notes: 'Renderer deserves a bounded contract.', actor_name: 'worker'
+      });
+      const promoted = await invoke('vibesync_promote_insight', { insight_id: parked.id, actor_name: 'human' });
+      assert.equal(promoted.feature.id, 'FEAT-02');
+      assert.equal(promoted.feature.status, 'draft');
+      assert.deepEqual(promoted.suggested_scopes, ['src/render/**']);
+      assert.equal(promoted.insight.status, 'promoted');
     });
   });
 

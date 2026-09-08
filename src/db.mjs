@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     settled_commit TEXT,
     allowed_paths JSON NOT NULL DEFAULT '["*"]',
     required_gates JSON NOT NULL DEFAULT '[]',
+    setup JSON NOT NULL DEFAULT '[]',
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     max_failures INTEGER NOT NULL DEFAULT 3,
     lease_expires_at DATETIME,
@@ -256,6 +257,9 @@ export function migrateSchema(db) {
     }
     if (!taskCols.includes('external_ref')) {
       db.exec("ALTER TABLE tasks ADD COLUMN external_ref TEXT;");
+    }
+    if (!taskCols.includes('setup')) {
+      db.exec("ALTER TABLE tasks ADD COLUMN setup JSON NOT NULL DEFAULT '[]';");
     }
   }
 }

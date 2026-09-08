@@ -217,6 +217,14 @@ describe('Suite 2: Feature 16 — Shift-Left Gatekeeper Subprocess Runner', () =
       assert.strictEqual(res.exitCode, 0);
     });
   });
+
+  it('Case 2.7: rejects unquoted shell operators and accepts argv arrays', () => {
+    const rejected = runGateCommand('node -e process.exit(0) && echo injected');
+    assert.equal(rejected.success, false);
+    assert.match(rejected.error, /shell operators/i);
+    const accepted = runGateCommand(['node', '-e', 'process.exit(0)']);
+    assert.equal(accepted.success, true, JSON.stringify(accepted));
+  });
 });
 
 // ============================================================================

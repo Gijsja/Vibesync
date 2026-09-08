@@ -280,7 +280,8 @@ export function checkScopeBoundary(worktreePath, allowedPaths, options = {}) {
   const changedFiles = getChangedFiles({
     cwd: worktreePath,
     baseCommit: options.baseCommit,
-    taskBranch: options.taskBranch
+    taskBranch: options.taskBranch,
+    stagedOnly: options.stagedOnly
   });
 
   return validatePathWhitelist(changedFiles, allowedPaths, {
