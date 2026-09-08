@@ -152,31 +152,32 @@ export function getGitNote(commitSha, optionsOrRepoRoot = process.cwd(), maybeRe
  * @param {string} repoRoot 
  * @param {object} [stashInfo=null] 
  * @param {string} [originalBranch='main'] 
+ * @param {string} [targetBranch='main'] - The branch settlement was targeting (used to determine whether a checkout-back is needed)
  */
-export function rollbackSettlement(repoRoot, stashInfo = null, originalBranch = 'main') {
+export function rollbackSettlement(repoRoot, stashInfo = null, originalBranch = 'main', targetBranch = 'main') {
   // 1. Abort merge or reset
   try {
-    execGitWithBackoff('git merge --abort', { cwd: repoRoot });
+    execGitWithBackoff(['merge', '--abort'], { cwd: repoRoot });
   } catch {
     try {
-      execGitWithBackoff('git reset --merge', { cwd: repoRoot });
+      execGitWithBackoff(['reset', '--merge'], { cwd: repoRoot });
     } catch {}
   }
 
-  // 2. Return to original branch if different
-  if (originalBranch && originalBranch !== 'main') {
+  // 2. Return to original branch if we left it for the target branch
+  if (originalBranch && originalBranch !== targetBranch) {
     try {
-      execGitWithBackoff(`git checkout ${originalBranch}`, { cwd: repoRoot });
+      execGitWithBackoff(['checkout', originalBranch], { cwd: repoRoot });
     } catch {}
   }
 
   // 3. Pop stash if stashed
   if (stashInfo && stashInfo.didStash) {
     try {
-      execGitWithBackoff('git stash pop --index', { cwd: repoRoot });
+      execGitWithBackoff(['stash', 'pop', '--index'], { cwd: repoRoot });
     } catch {
       try {
-        execGitWithBackoff('git stash pop', { cwd: repoRoot });
+        execGitWithBackoff(['stash', 'pop'], { cwd: repoRoot });
       } catch {}
     }
   }
@@ -272,7 +273,7 @@ export function performSquashSettlement(params) {
         evidence_payload: { settledSha, gates: gateLogs, branch: task.branch_name } });
       db.exec('COMMIT');
       committedState = true;
-    } catch (err) { if (db.isTransaction) db.exec('ROLLBACK'); throw err; }
+    } catch (err) { try { db.exec('ROLLBACK'); } catch {} throw err; }
     try { checkpointState(db); } catch (err) { warnings.push(`Settlement is recorded locally but its Git checkpoint failed: ${err.message}`); }
     try { restoreDeveloper(); } catch (err) { warnings.push(`Developer work restoration needs attention. Your stash is preserved as ${stashSha || 'the existing Git stash'}: ${err.message}`); }
     if (worktreePath) {

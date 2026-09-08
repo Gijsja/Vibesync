@@ -270,8 +270,8 @@ export function initSchema(db) {
 }
 
 export function getDb(dbPath, repoRoot = process.cwd()) {
-  if (!dbPath && _activeDb && _activeDb.isOpen &&
-      (arguments.length === 0 || _activeDbPath === path.resolve(getDbPath(repoRoot)))) {
+  const resolvedTarget = path.resolve(getDbPath(repoRoot));
+  if (!dbPath && _activeDb && _activeDb.isOpen && _activeDbPath === resolvedTarget) {
     return _activeDb;
   }
 

@@ -34,7 +34,7 @@ export function repairDatabase(repoRoot = process.cwd(), customDb = null) {
   // 1. Rebuild Incubator from Orphan Branch
   // ==========================================================================
   try {
-    const raw = execGitWithBackoff(`git show ${INCUBATOR_BRANCH}:incubator.json`, { cwd: repoRoot });
+    const raw = execGitWithBackoff(['show', `${INCUBATOR_BRANCH}:incubator.json`], { cwd: repoRoot });
     if (raw && raw.trim()) {
       const items = JSON.parse(raw);
       if (Array.isArray(items)) {
@@ -71,11 +71,11 @@ export function repairDatabase(repoRoot = process.cwd(), customDb = null) {
   const delimiter = '---VIBESYNC_DELIM_REPAIR---';
   let logOutput = '';
   try {
-    logOutput = execGitWithBackoff(`git log main --format="%H%n%B${delimiter}"`, { cwd: repoRoot });
+    logOutput = execGitWithBackoff(['log', 'main', `--format=%H%n%B${delimiter}`], { cwd: repoRoot });
   } catch (err) {
     // If 'main' doesn't exist, try HEAD
     try {
-      logOutput = execGitWithBackoff(`git log -n 100 --format="%H%n%B${delimiter}"`, { cwd: repoRoot });
+      logOutput = execGitWithBackoff(['log', '-n', '100', `--format=%H%n%B${delimiter}`], { cwd: repoRoot });
     } catch {}
   }
 
@@ -194,7 +194,7 @@ export function repairDatabase(repoRoot = process.cwd(), customDb = null) {
   // 3. Scan for In-Flight Task Branches (task/*)
   // ==========================================================================
   try {
-    const rawBranches = execGitWithBackoff("git branch --list 'task/*'", { cwd: repoRoot });
+    const rawBranches = execGitWithBackoff(['branch', '--list', 'task/*'], { cwd: repoRoot });
     if (rawBranches) {
       const branchNames = rawBranches
         .split('\n')
@@ -217,7 +217,7 @@ export function repairDatabase(repoRoot = process.cwd(), customDb = null) {
         const rawId = branch.replace(/^task\//i, '').toUpperCase();
         let baseCommit = '0000000';
         try {
-          baseCommit = execGitWithBackoff(`git merge-base main ${branch}`, { cwd: repoRoot });
+          baseCommit = execGitWithBackoff(['merge-base', 'main', branch], { cwd: repoRoot });
         } catch {}
 
         const res = insertInFlightStmt.run(

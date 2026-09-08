@@ -176,7 +176,7 @@ export function synthesizeAgents(tasks = [], providers = [], events = []) {
 export function getPayload(db = getDb(), repoRoot = process.cwd()) {
   let gitHead = 'detached';
   try {
-    gitHead = execGitWithBackoff('git rev-parse --short HEAD', { cwd: repoRoot });
+    gitHead = execGitWithBackoff(['rev-parse', '--short', 'HEAD'], { cwd: repoRoot });
   } catch {}
 
   const features = listFeatures(db) || [];
@@ -469,8 +469,8 @@ export async function startServer(options = {}) {
         if (currentBranch !== getTrunk(repoRoot)) throw requestError(409, 'Switch the repository to its trunk branch before making a hotfix.');
         if (body.expectedHead && body.expectedHead !== execGitWithBackoff(['rev-parse', 'HEAD'], { cwd: repoRoot })) throw requestError(409, 'Trunk changed since preview. Reopen the hotfix preview.');
         try {
-          execGitWithBackoff('git add -A', { cwd: repoRoot });
-          execGitWithBackoff('git commit --allow-empty -F -', { cwd: repoRoot, input: `hotfix: ${message}` });
+          execGitWithBackoff(['add', '-A'], { cwd: repoRoot });
+          execGitWithBackoff(['commit', '--allow-empty', '-F', '-'], { cwd: repoRoot, input: `hotfix: ${message}` });
         } catch (e) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: `Git commit failed: ${e.message}` }));
@@ -478,7 +478,7 @@ export async function startServer(options = {}) {
 
         let settledSha = 'HEAD';
         try {
-          settledSha = execGitWithBackoff('git rev-parse HEAD', { cwd: repoRoot });
+          settledSha = execGitWithBackoff(['rev-parse', 'HEAD'], { cwd: repoRoot });
         } catch {}
 
         recordSettlementEvent(db, {
