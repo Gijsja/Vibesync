@@ -39,7 +39,9 @@ Initialization creates the SQLite database, installs the dashboard, adds runtime
 ignore rules, and merges a VibeSync server binding into `.mcp.json`. Existing MCP
 servers and custom dashboards are preserved. New repositories receive an empty
 initial Git commit; user files are not staged or committed. Existing repositories
-keep their history. No sample features or tasks are inserted.
+keep their history. No sample features or tasks are inserted. New workspaces also
+receive policy version 2, which requires command approval and Linux Bubblewrap,
+denies undeclared network access, and disables legacy command contracts.
 
 `vibesync --help` lists runtime options. Use `--port 0` to choose a free port.
 
@@ -100,6 +102,8 @@ with the current strike count, exact failure, and forbidden follow-up actions.
 | `vibesync_list_ready_tasks` | Read a compact list of claimable tasks |
 | `vibesync_get_task_detail` | Read one task and its parent feature contract |
 | `vibesync_claim_task` | Lease a task and provision its worktree when no path is supplied |
+| `vibesync_heartbeat_task` | Renew ownership from server-observed workspace evidence |
+| `vibesync_partial_verify` | Run selected structured, safe gates without settlement |
 | `vibesync_verify_and_settle` | Run the judicial pipeline and settle a passing task |
 | `vibesync_park_insight` | Park an idea on the incubator orphan branch |
 
@@ -112,13 +116,41 @@ server assigns predictable IDs such as `FEAT-01` and `TASK-01.1`.
 | Tool | Purpose |
 | --- | --- |
 | `vibesync_get_state` | Read the complete ledger for administration and diagnosis |
+| `vibesync_preview_task` | Resolve model suitability, command hashes, runtime history, and approvals |
+| `vibesync_approve_task_command` | Approve one hash-bound setup, task, or feature command |
 | `vibesync_create_feature` | Define a feature contract and holistic gate |
 | `vibesync_create_task` | Register scope, gates, and optional provisioning commands |
 | `vibesync_release_task` | Release an active lease and preserve work |
 | `vibesync_merge_insights` | Merge related incubator ideas while retaining provenance |
 | `vibesync_promote_insight` | Turn a parked insight into a scoped draft feature |
 | `vibesync_settle_feature` | Verify and settle a completed feature contract |
+| `vibesync_get_lease_rollup` | Read redacted correlated lease, gate, approval, and handoff evidence |
+| `vibesync_route_task` | Launch a configured Gemini, Claude, Codex, or local CLI adapter |
+| `vibesync_adapter_status` | Inspect, cancel, collect, or hand off a supervised adapter run |
+| `vibesync_policy_status` | Preview policy capabilities, legacy commands, and missing approvals |
+| `vibesync_migrate_policy` | Explicitly apply the reviewed version-2 policy migration |
 | `vibesync_repair_state` | Reconcile state from Git provenance |
+
+## Execution policy and migration
+
+Policy version 2 uses `approval_mode: enforce`, `sandbox_mode: required`,
+`network_default: false`, and `allow_legacy_commands: false`. A structured command
+declares its argv, idempotency, optional network requirement, timeout, and optional
+write paths. Approval is bound to the resolved command hash; changing an executable
+or npm script invalidates the approval, and unsafe commands consume it.
+
+Existing versionless/version-1 projects remain in compatibility mode until an
+administrator migrates them. First call `vibesync_policy_status`. Replace the
+listed legacy commands, review the approvals it says are needed, confirm that the
+host reports required-sandbox support, and then call `vibesync_migrate_policy`
+with `apply: true` and a non-empty `confirmed_by`. The migration changes policy
+only: it neither rewrites commands nor grants approvals. Invalid policy JSON or
+unsupported versions fail closed.
+
+Gemini, Claude, Codex, and local adapters are configured as executable/argv
+templates with explicit environment allowlists. Task context is passed in a mode
+0600 redacted file, not interpolated into a shell command. VibeSync owns the lease
+heartbeat and stops the old process before provider handoff.
 
 ## Recovery and local state
 
@@ -140,9 +172,12 @@ separately. Inspect interrupted verification before retrying.
 
 ## Safety and verification
 
-This is a trusted local tool. Keep the HTTP server bound to loopback. Gate commands
-execute with your user permissions. Hotfix stages all workspace changes; review
-those changes first. See [HARDENING.md](../HARDENING.md) for enforced boundaries.
+This is a trusted local tool. Keep the HTTP server bound to loopback. Version-2
+gates run as your user inside Linux Bubblewrap; compatibility process mode is not
+OS containment. Hotfix stages all workspace changes, so review them first. Adapter
+supervision is process-local and cannot reattach after restart. CPU and memory do
+not have portable hard quotas beyond concurrency, time, and output ceilings. See
+[HARDENING.md](../HARDENING.md) for the full boundaries and residual risks.
 
 ```sh
 npm test

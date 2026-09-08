@@ -182,7 +182,46 @@ export function captureWorkspaceState(cwd = process.cwd()) {
   }
   let head = null;
   try { head = execGitWithBackoff(['rev-parse', 'HEAD'], { cwd }); } catch {}
-  return { head, entries };
+  const gitMetadata = hashGitControlMetadata(cwd);
+  return { head, gitMetadata, entries };
+}
+
+function hashGitControlMetadata(cwd) {
+  try {
+    const dotGit = path.join(cwd, '.git');
+    let gitDir = dotGit;
+    if (fs.statSync(dotGit).isFile()) {
+      const match = fs.readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+)\s*$/m);
+      if (!match) return null;
+      gitDir = path.resolve(cwd, match[1]);
+    }
+    const commonMarker = path.join(gitDir, 'commondir');
+    const commonDir = fs.existsSync(commonMarker)
+      ? path.resolve(gitDir, fs.readFileSync(commonMarker, 'utf8').trim())
+      : gitDir;
+    const hash = crypto.createHash('sha256');
+    const addFile = file => {
+      if (!fs.existsSync(file)) return;
+      const stat = fs.lstatSync(file);
+      if (stat.isSymbolicLink()) hash.update(`L:${file}:${fs.readlinkSync(file)}\0`);
+      else if (stat.isFile()) hash.update(`F:${file}\0`).update(fs.readFileSync(file)).update('\0');
+    };
+    const addTree = directory => {
+      if (!fs.existsSync(directory)) return;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        const target = path.join(directory, entry.name);
+        if (entry.isDirectory()) addTree(target);
+        else addFile(target);
+      }
+    };
+    addFile(path.join(commonDir, 'config'));
+    addFile(path.join(commonDir, 'packed-refs'));
+    if (gitDir !== commonDir) addFile(path.join(gitDir, 'config.worktree'));
+    addTree(path.join(commonDir, 'refs'));
+    return hash.digest('hex');
+  } catch {
+    return null;
+  }
 }
 
 /** Return paths persistently changed between two gate workspace snapshots. */
@@ -200,11 +239,14 @@ export function validateWorkspaceWriteDelta(before, after, allowedPaths = ['*'],
   const taskCheck = validatePathWhitelist(writes, allowedPaths);
   const declaration = Array.isArray(declaredWritePaths) && declaredWritePaths.length ? declaredWritePaths : allowedPaths;
   const declarationCheck = validatePathWhitelist(writes, declaration);
-  const gitMutation = Boolean(before?.head && after?.head && before.head !== after.head);
+  const gitHeadMutation = Boolean(before?.head && after?.head && before.head !== after.head);
+  const gitMetadataMutation = Boolean(before?.gitMetadata && after?.gitMetadata && before.gitMetadata !== after.gitMetadata);
+  const gitMutation = gitHeadMutation || gitMetadataMutation;
   const violations = [...new Set([
     ...taskCheck.violations,
     ...declarationCheck.violations,
-    ...(gitMutation ? ['.git/HEAD'] : [])
+    ...(gitHeadMutation ? ['.git/HEAD'] : []),
+    ...(gitMetadataMutation ? ['.git/metadata'] : [])
   ])].sort();
   return {
     valid: violations.length === 0,

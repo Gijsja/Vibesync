@@ -34,8 +34,10 @@ unauthenticated local HTTP API.
   redacted logs, diagnostics, runtime records, and optional Bubblewrap isolation.
 - Verification gates snapshot persistent tracked and non-ignored workspace state
   before and after every command. Writes must remain inside both the task scope
-  and the command's optional narrower `write_paths`; Git history mutation is
-  always rejected. Bubblewrap mounts the workspace read-only and overlays only
+  and the command's optional narrower `write_paths`; Git HEAD, refs, and repository
+  configuration mutation is always rejected. Declared write roots that resolve
+  through a symlink outside the worktree are rejected before launch. Bubblewrap
+  mounts the workspace read-only and overlays only
   the declared write roots, containing ignored or transient writes as well.
 - Approval hashes include resolved npm script content, so editing a package script
   invalidates its prior approval. Non-idempotent commands consume their approval.
@@ -51,7 +53,8 @@ unauthenticated local HTTP API.
   verification accepts only structured, explicitly safe commands.
 - Public lease run identifiers correlate task events and gate evidence without
   exposing opaque owner tokens. Audit rollups are deterministic, redact sensitive
-  text, and reference large artifacts by hash instead of copying their contents.
+  keys and text, HTML-escape untrusted strings, and reference large artifacts by
+  hash instead of copying their contents.
 - Model adapters are structured CLI launchers with explicit environment allowlists,
   private redacted context files, bounded output, supervised leases, and no shell.
   Provider handoff terminates the old process before releasing and reacquiring the
@@ -70,10 +73,32 @@ and missing approvals without mutation. Invalid policy files fail closed instead
 of silently reverting to compatibility behavior. Structured command profiles reduce
 ambiguity but do not make test code intrinsically trustworthy.
 
+## Residual risks
+
+- VibeSync is a local, single-user coordinator, not a multi-tenant security
+  service. The loopback HUD has no remote-user authentication.
+- Bubblewrap containment is Linux-specific. Required mode fails closed when it is
+  unavailable; process mode has sanitized environment and resource ceilings but
+  no filesystem or network isolation.
+- Provider adapters launch configured CLIs. Their binaries and dependencies are
+  trusted, their run registry is held in the supervisor process, and runs cannot
+  be reattached after a supervisor restart.
+- Gate limits cover concurrency, elapsed time, and captured output. Portable hard
+  CPU and memory quotas are not yet enforced.
+- PID-based abandoned-slot detection is strongest on POSIX hosts. A TTL supplies
+  bounded recovery where liveness cannot be established, so a slot can remain
+  occupied until that TTL expires.
+- Secret detection is pattern-based and cannot prove that source, Git history,
+  command output, external provider logs, or custom artifacts contain no secrets.
+- Hotfix intentionally stages every changed workspace file after preview and
+  secret scanning. The human operator must review that set before confirming.
+
 ## Verification
 
 Run `npm test` with Node 24 or later. The fixtures require child-process execution,
 temporary Git repositories and local HTTP listeners. HTTP attack regressions are
 in tests/http-hardening.test.mjs; lifecycle and artifact regressions are in
 tests/adversarial-m1.test.mjs. Historical tests that asserted successful exploits
-now assert rejection and preserved state.
+now assert rejection and preserved state. Cross-model, lease-race, Git metadata,
+symlink, network, audit-content, provider-crash, slot-recovery, and complete
+pipeline regressions live in tests/adversarial-m3.test.mjs.

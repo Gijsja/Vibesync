@@ -245,6 +245,11 @@ function bubblewrapWriteRoots(cwd, writePaths) {
     if (!candidate.startsWith(path.resolve(cwd) + path.sep) && candidate !== path.resolve(cwd)) {
       throw new Error('Sandbox write path resolved outside the workspace.');
     }
+    const realCandidate = fs.realpathSync(candidate);
+    const realCwd = fs.realpathSync(cwd);
+    if (realCandidate !== realCwd && !realCandidate.startsWith(realCwd + path.sep)) {
+      throw Object.assign(new Error('Sandbox write path resolves through a symlink outside the workspace.'), { code: 'WRITE_SCOPE_SYMLINK' });
+    }
     roots.add(candidate);
   }
   return [...roots].sort((a, b) => a.length - b.length);
@@ -255,11 +260,11 @@ export function prepareSandboxedCommand(spec, cwd, repoRoot = process.cwd(), all
   if (policy.sandbox_mode === 'process') {
     return { argv: spec.argv, sandbox: 'process', warning: spec.network ? 'Network access was declared but is not isolated in process sandbox mode.' : 'Process sandbox sanitizes environment and limits time/output; OS filesystem and network isolation are not active.' };
   }
+  const writeRoots = bubblewrapWriteRoots(cwd, spec.write_paths?.length ? spec.write_paths : allowedWritePaths);
   if (!hasBubblewrap()) {
     if (policy.sandbox_mode === 'required') throw Object.assign(new Error('Bubblewrap sandbox is required by policy but unavailable on this host.'), { code: 'SANDBOX_UNAVAILABLE', phase: 'SANDBOX_UNAVAILABLE' });
     return { argv: spec.argv, sandbox: 'process', warning: 'Bubblewrap unavailable; using hardened process mode.' };
   }
-  const writeRoots = bubblewrapWriteRoots(cwd, spec.write_paths?.length ? spec.write_paths : allowedWritePaths);
   const argv = ['bwrap', '--die-with-parent', '--new-session', '--ro-bind', '/', '/', '--dev', '/dev', '--ro-bind', cwd, cwd];
   for (const writeRoot of writeRoots) argv.push('--bind', writeRoot, writeRoot);
   argv.push('--chdir', cwd);

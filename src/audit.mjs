@@ -8,9 +8,14 @@ function json(value, fallback = null) {
 }
 
 function redact(value) {
-  if (typeof value === 'string') return redactSensitive(value);
+  if (typeof value === 'string') return redactSensitive(value).replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
   if (Array.isArray(value)) return value.map(redact);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redact(item)]));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    /token|secret|password|credential|authorization|api.?key|private.?key/i.test(key) ? '[REDACTED]' : redact(item)
+  ]));
   return value;
 }
 

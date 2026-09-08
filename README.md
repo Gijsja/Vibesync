@@ -85,14 +85,15 @@ claim returns an opaque lease token; long-running agents should renew it with
 heartbeat cadence and a longer renewable lease, without receiving broader command
 permissions. Approvals are available only on the administrator MCP surface.
 
-Projects can opt into fail-closed command approval with
-`.vibesync/policy.json`:
+New projects receive fail-closed command policy in `.vibesync/policy.json`:
 
 ```json
 {
+  "version": 2,
   "approval_mode": "enforce",
   "sandbox_mode": "required",
-  "network_default": false
+  "network_default": false,
+  "allow_legacy_commands": false
 }
 ```
 
@@ -133,6 +134,9 @@ Bubblewrap isolation is required, network is denied by default, and legacy comma
 forms are disabled. Existing or versionless projects retain version-1 compatibility
 until an administrator reviews `vibesync_policy_status` and explicitly applies
 `vibesync_migrate_policy`; migration never rewrites contracts or grants approvals.
+The preview lists every legacy command, its suggested structured replacement, and
+each approval still required. Migration must include an explicit administrator
+confirmation, and malformed policy files stop execution rather than falling back.
 
 ## A few useful boundaries
 
@@ -146,6 +150,15 @@ The activity panel estimates local activity, not provider billing or account
 quotas. Recovery restores recorded state; separately back up uncommitted source
 files and worktrees. See [security notes](SECURITY.md) and
 [recovery instructions](docs/USAGE.md#recovery-and-local-state).
+
+Adapter supervision state is currently process-local: restarting VibeSync does not
+reattach to a provider CLI that survived independently. CLI adapters are not SDK
+integrations, and configured provider executables remain part of the trusted
+computing base. Gate CPU and memory are constrained indirectly through concurrency,
+time, and output ceilings; VibeSync does not yet install portable per-process CPU
+or memory quotas. On non-Linux systems Bubblewrap is unsupported, so policy v2
+`required` mode intentionally refuses to run gates. Compatibility-mode projects
+using process isolation do not receive filesystem or network containment.
 
 ## Contributing
 
