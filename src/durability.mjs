@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 
 export const STATE_REF = 'refs/heads/vibesync/state';
 export const STATE_TABLES = ['features', 'tasks', 'incubator', 'settlement_events', 'operations'];
@@ -84,7 +85,7 @@ export function restoreStateCheckpoint(db, root, checkpoint) {
   fs.mkdirSync(directory, { recursive: true });
   for (const [hash, content] of Object.entries(checkpoint.logs)) {
     const target = path.join(directory, `${hash}.log`);
-    const temporary = `${target}.${process.pid}.tmp`;
+    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
     fs.writeFileSync(temporary, content, { flag: 'wx' });
     fs.renameSync(temporary, target);
   }

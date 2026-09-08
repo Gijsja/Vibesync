@@ -188,13 +188,13 @@ export function syncIncubatorToOrphanBranch(db = getDb(), repoRoot = process.cwd
   const payload = JSON.stringify(records, null, 2) + '\n';
 
   // 1. Write loose blob directly into .git/objects
-  const blobSha = execGitWithBackoff('git hash-object -w --stdin', {
+  const blobSha = execGitWithBackoff(['hash-object', '-w', '--stdin'], {
     cwd: repoRoot,
     input: payload
   });
 
   // 2. Build Merkle tree referencing incubator.json
-  const treeSha = execGitWithBackoff('git mktree', {
+  const treeSha = execGitWithBackoff(['mktree'], {
     cwd: repoRoot,
     input: `100644 blob ${blobSha}\tincubator.json\n`
   });
@@ -202,7 +202,7 @@ export function syncIncubatorToOrphanBranch(db = getDb(), repoRoot = process.cwd
   // 3. Inspect if previous orphan commit exists
   let parentSha = null;
   try {
-    const ref = execGitWithBackoff(`git rev-parse --verify refs/heads/${INCUBATOR_BRANCH}`, {
+    const ref = execGitWithBackoff(['rev-parse', '--verify', `refs/heads/${INCUBATOR_BRANCH}`], {
       cwd: repoRoot
     });
     if (/^[0-9a-f]{40}$/i.test(ref)) {
@@ -212,16 +212,14 @@ export function syncIncubatorToOrphanBranch(db = getDb(), repoRoot = process.cwd
     parentSha = null;
   }
 
-  // 4. Create commit object
-  const parentArg = parentSha ? `-p ${parentSha}` : '';
+  // 4. Create commit object — pipe message via stdin to avoid shell interpolation
   const commitMsg = `sync: update parked incubator records (${records.length} items)`;
-  const commitSha = execGitWithBackoff(
-    `git commit-tree ${treeSha} ${parentArg} -m "${commitMsg}"`,
-    { cwd: repoRoot }
-  );
+  const commitTreeArgs = ['commit-tree', treeSha, '-F', '-'];
+  if (parentSha) { commitTreeArgs.push('-p', parentSha); }
+  const commitSha = execGitWithBackoff(commitTreeArgs, { cwd: repoRoot, input: commitMsg });
 
   // 5. Update branch ref
-  execGitWithBackoff(`git update-ref refs/heads/${INCUBATOR_BRANCH} ${commitSha}`, {
+  execGitWithBackoff(['update-ref', `refs/heads/${INCUBATOR_BRANCH}`, commitSha], {
     cwd: repoRoot
   });
 
@@ -637,4 +635,3 @@ export function getConventions(db = getDb()) {
     ORDER BY created_at DESC
   `).all();
 }
-
