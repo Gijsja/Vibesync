@@ -328,6 +328,7 @@ export async function startServer(options = {}) {
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'");
     let pathname = '';
     try {
       // Pin authority to the actual listener, including when an ephemeral port is used.

@@ -1,0 +1,4 @@
+## 2025-02-23 - Add Content-Security-Policy (CSP) Header
+**Vulnerability:** Missing Content-Security-Policy (CSP) header in HTTP responses (`src/server.mjs`), which could expose the application to Cross-Site Scripting (XSS) and data injection attacks if the web dashboard was manipulated.
+**Learning:** The built-in node:http server in `src/server.mjs` was manually setting security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, etc.) but omitted a basic CSP. Because VibeSync serves a local dashboard application (`.vibesync/dashboard.html`) to users, implementing a CSP adds an essential defense-in-depth layer against malicious scripts.
+**Prevention:** Always verify that fundamental security headers, especially CSP, are implemented when serving local HTML dashboards, even when intended to be bound to a local loopback interface.
