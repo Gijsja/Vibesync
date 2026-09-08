@@ -115,6 +115,12 @@ one concurrent gate. Workers may call `vibesync_partial_verify` for early feedba
 but only structured commands declared `idempotency: safe` are eligible and a
 partial run never settles the task or changes its owner.
 
+Each claim also receives a public `leaseRunId` distinct from its secret lease
+token. Gate runs and lifecycle events carry that correlation key, allowing the
+administrator MCP tool and HUD to show a deterministic, redacted lease rollup of
+commands, approvals, persistent writes, failures, and handoffs without embedding
+large artifacts or credentials.
+
 ## A few useful boundaries
 
 VibeSync is a **trusted local development tool**. The default process sandbox is

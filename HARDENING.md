@@ -49,6 +49,9 @@ unauthenticated local HTTP API.
   processes. Every exit path releases its slot; abandoned slots are reclaimed by
   PID or a bounded TTL. Project policy caps time and output, and partial
   verification accepts only structured, explicitly safe commands.
+- Public lease run identifiers correlate task events and gate evidence without
+  exposing opaque owner tokens. Audit rollups are deterministic, redact sensitive
+  text, and reference large artifacts by hash instead of copying their contents.
 - Repair restores durable Git snapshots into a replacement database, preserving
   backups of the original database and its sidecars.
 - Initialization preserves existing MCP bindings, dashboards, and user files.

@@ -282,9 +282,10 @@ export function settleFeature(params, db = getDb(), repoRoot = process.cwd()) {
       proc.summary = writeScope.error;
     }
     const runArtifact = proc.success ? null : saveArtifact(JSON.stringify({ stdout: proc.stdout, stderr: proc.stderr, diagnostics: proc.diagnostics, writeScope }, null, 2), repoRoot);
-    db.prepare(`INSERT INTO gate_runs (id, feature_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash)
-      VALUES (?, ?, 'feature', 0, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(randomUUID(), featureId, spec.policyHash, actorName, identifyModelProfile(actorName).id, proc.success ? 'passed' : 'failed', proc.exitCode, durationMs, proc.summary || null, runArtifact);
+    db.prepare(`INSERT INTO gate_runs (id, feature_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash, evidence_payload)
+      VALUES (?, ?, 'feature', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(randomUUID(), featureId, spec.policyHash, actorName, identifyModelProfile(actorName).id, proc.success ? 'passed' : 'failed', proc.exitCode, durationMs, proc.summary || null, runArtifact,
+        JSON.stringify({ sandbox: sandbox.sandbox, approval: approval.approved ? 'approved' : approval.mode, writes: writeScope.writes, declared_write_paths: writeScope.declaredWritePaths, diagnostics: proc.diagnostics }));
     if (spec.idempotency === 'unsafe' && approval.approved) db.prepare('UPDATE gate_approvals SET revoked_at = CURRENT_TIMESTAMP WHERE policy_hash = ?').run(spec.policyHash);
 
     if (!proc.success) {

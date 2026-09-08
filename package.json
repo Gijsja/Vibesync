@@ -16,6 +16,7 @@
     "./policy": "./src/policy.mjs",
     "./fingerprint": "./src/fingerprint.mjs",
     "./scheduler": "./src/scheduler.mjs",
+    "./audit": "./src/audit.mjs",
     "./merge": "./src/merge.mjs",
     "./settle": "./src/settle.mjs",
     "./server": "./src/server.mjs",

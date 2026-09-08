@@ -3315,13 +3315,20 @@
         const res = await fetch(`${API_BASE}/api/logs?taskId=${encodeURIComponent(taskId)}`);
         if (res.ok) {
           const data = await res.json();
+          let rendered = '';
           if (data.logs && data.logs.length > 0) {
-            contentEl.textContent = data.logs.map(l => `=== [${l.file}] ===\n${l.content}`).join('\n\n');
+            rendered = data.logs.map(l => `=== [${l.file}] ===\n${l.content}`).join('\n\n');
           } else if (data.events && data.events.length > 0) {
-            contentEl.textContent = `[Audit Trail Evidence]\n` + JSON.stringify(data.events, null, 2);
+            rendered = `[Audit Trail Evidence]\n` + JSON.stringify(data.events, null, 2);
           } else {
-            contentEl.textContent = `[VibeSync Gatekeeper]\nTask: ${taskId}\nStatus: In queue / no gate execution artifacts persisted yet.\nGates will run automatically on vibesync_verify_and_settle.`;
+            rendered = `[VibeSync Gatekeeper]\nTask: ${taskId}\nStatus: In queue / no gate execution artifacts persisted yet.\nGates will run automatically on vibesync_verify_and_settle.`;
           }
+          const task = currentState?.tasks?.find(item => item.id === taskId);
+          if (task?.lease_run_id) {
+            const rollupRes = await fetch(`${API_BASE}/api/leases/${encodeURIComponent(task.lease_run_id)}/rollup`);
+            if (rollupRes.ok) rendered += `\n\n=== LEASE AUDIT ROLLUP ===\n${JSON.stringify(await rollupRes.json(), null, 2)}`;
+          }
+          contentEl.textContent = rendered;
         } else {
           contentEl.textContent = 'No log records returned from server.';
         }
@@ -4726,6 +4733,5 @@
   </script>
 </body>
 </html>
-
 
 

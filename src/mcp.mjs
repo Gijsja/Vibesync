@@ -24,6 +24,7 @@ import { executePartialVerification } from './gatekeeper.mjs';
 import { getPayload } from './server.mjs';
 import { repairDatabase } from './repair.mjs';
 import { previewTask, previewFeature, approveTaskCommand, approveFeatureCommand } from './policy.mjs';
+import { buildLeaseRollup } from './audit.mjs';
 
 const commandSchema = { oneOf: [
   { type: 'string', description: 'Legacy shell-free command string.' },
@@ -45,6 +46,7 @@ const TOOL_ROLES = Object.freeze({
   vibesync_promote_insight: 'admin',
   vibesync_approve_task_command: 'admin',
   vibesync_approve_feature_command: 'admin',
+  vibesync_get_lease_rollup: 'admin',
   vibesync_get_state: 'admin', vibesync_list_ready_tasks: 'worker', vibesync_get_task_detail: 'worker',
   vibesync_preview_task: 'worker', vibesync_preview_feature: 'worker', vibesync_claim_task: 'worker', vibesync_heartbeat_task: 'worker',
   vibesync_partial_verify: 'worker',
@@ -101,6 +103,11 @@ export function createMcpServer(options = {}) {
           type: 'object',
           properties: {}
         }
+      },
+      {
+        name: 'vibesync_get_lease_rollup',
+        description: description('Read the deterministic audit rollup for one lease run.', 'An administrator is reviewing commands, files, approvals, failures, or handoffs for a specific lease.', 'Do not use to retrieve raw artifact contents or lease tokens.', 'Read-only; returns redacted metadata and artifact references.'), annotations: annotations(true, false, true),
+        inputSchema: { type: 'object', properties: { lease_run_id: { type: 'string' } }, required: ['lease_run_id'] }
       },
       {
         name: 'vibesync_list_ready_tasks',
@@ -374,6 +381,10 @@ export function createMcpServer(options = {}) {
         const result = heartbeatTaskLease({ taskId: args.task_id, actorName: args.actor_name, leaseToken: args.lease_token, worktreePath: args.worktree_path, repoRoot }, db);
         if (onUpdate) onUpdate();
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      if (name === 'vibesync_get_lease_rollup') {
+        return { content: [{ type: 'text', text: JSON.stringify(buildLeaseRollup(args.lease_run_id, db), null, 2) }] };
       }
 
       if (name === 'vibesync_partial_verify') {

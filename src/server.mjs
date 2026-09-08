@@ -26,6 +26,7 @@ import { computeProviderUsage, updateProviderUsageConfig } from './usage.mjs';
 import { previewTask, previewFeature } from './policy.mjs';
 import { scanSecretEntries } from './secrets.mjs';
 import { cleanAbandonedGateSlots } from './scheduler.mjs';
+import { buildLeaseRollup, listLeaseRollups } from './audit.mjs';
 
 function scanChangedWorkspaceSecrets(repoRoot) {
   const files = execGitWithBackoff(['ls-files', '-m', '-o', '--exclude-standard', '-z'], { cwd: repoRoot, raw: true }).split('\0').filter(Boolean);
@@ -203,6 +204,7 @@ export function getPayload(db = getDb(), repoRoot = process.cwd()) {
   const providers = computeProviderUsage(db, repoRoot);
   const gateRuns = db.prepare('SELECT * FROM gate_runs ORDER BY started_at DESC LIMIT 50').all();
   const gateApprovals = db.prepare('SELECT policy_hash, task_id, feature_id, phase, approved_by, approved_at, revoked_at FROM gate_approvals ORDER BY approved_at DESC LIMIT 50').all();
+  const leaseRollups = listLeaseRollups({ limit: 25 }, db);
 
   const events = db.prepare(`
     SELECT * FROM settlement_events
@@ -224,6 +226,7 @@ export function getPayload(db = getDb(), repoRoot = process.cwd()) {
     events,
     gateRuns,
     gateApprovals,
+    leaseRollups,
     providers,
     agents
   };
@@ -404,6 +407,13 @@ export async function startServer(options = {}) {
         const payload = getPayload(db, repoRoot);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload, null, 2));
+      }
+
+      const leaseRollupMatch = pathname.match(/^\/api\/leases\/([A-Za-z0-9-]+)\/rollup$/);
+      if (leaseRollupMatch && req.method === 'GET') {
+        const rollup = buildLeaseRollup(leaseRollupMatch[1], db);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(rollup, null, 2));
       }
 
       // 3. Server-Sent Events (SSE) Stream

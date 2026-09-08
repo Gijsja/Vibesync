@@ -161,11 +161,14 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
     }
     let artifactHash = null;
     if (opts.db && opts.taskId) {
+      const leaseRunId = opts.db.prepare('SELECT lease_run_id FROM tasks WHERE id = ?').get(opts.taskId)?.lease_run_id || null;
+      const runEvidence = JSON.stringify({ sandbox: sandbox.sandbox, approval: approval.approved ? 'approved' : approval.mode,
+        writes: writeScope.writes, declared_write_paths: writeScope.declaredWritePaths, diagnostics: res.diagnostics });
       if (!res.success) artifactHash = saveArtifact(JSON.stringify({ stdout: res.stdout, stderr: res.stderr, diagnostics: res.diagnostics, writeScope }, null, 2), opts.repoRoot || cwd);
-      opts.db.prepare(`INSERT INTO gate_runs (id, task_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      opts.db.prepare(`INSERT INTO gate_runs (id, task_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash, lease_run_id, evidence_payload)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(randomUUID(), opts.taskId, phase, gateIndex, spec.policyHash, opts.actorName || 'unknown', modelProfile.id,
-          res.success ? 'passed' : 'failed', res.exitCode, durationMs, res.summary || null, artifactHash);
+          res.success ? 'passed' : 'failed', res.exitCode, durationMs, res.summary || null, artifactHash, leaseRunId, runEvidence);
       if (spec.idempotency === 'unsafe' && approval.approved) {
         opts.db.prepare('UPDATE gate_approvals SET revoked_at = CURRENT_TIMESTAMP WHERE policy_hash = ?').run(spec.policyHash);
       }

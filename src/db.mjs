@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS settlement_events (
     commit_ref TEXT NOT NULL,
     artifact_hash TEXT,
     evidence_payload JSON,
+    lease_run_id TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
     FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE SET NULL
@@ -184,6 +185,8 @@ CREATE TABLE IF NOT EXISTS gate_runs (
     duration_ms INTEGER NOT NULL,
     summary TEXT,
     artifact_hash TEXT,
+    lease_run_id TEXT,
+    evidence_payload JSON,
     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     finished_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
@@ -393,6 +396,8 @@ export function migrateSchema(db) {
   if (approvalCols.length && !approvalCols.includes('feature_id')) db.exec('ALTER TABLE gate_approvals ADD COLUMN feature_id TEXT REFERENCES features(id) ON DELETE CASCADE;');
   const runCols = db.prepare('PRAGMA table_info(gate_runs)').all().map(c => c.name);
   if (runCols.length && !runCols.includes('feature_id')) db.exec('ALTER TABLE gate_runs ADD COLUMN feature_id TEXT REFERENCES features(id) ON DELETE SET NULL;');
+  if (runCols.length && !runCols.includes('lease_run_id')) db.exec('ALTER TABLE gate_runs ADD COLUMN lease_run_id TEXT;');
+  if (runCols.length && !runCols.includes('evidence_payload')) db.exec('ALTER TABLE gate_runs ADD COLUMN evidence_payload JSON;');
   const runsDdl = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='gate_runs'").get()?.sql || '';
   if (runsDdl && !runsDdl.includes("'partial'")) {
     db.exec(`
@@ -402,17 +407,22 @@ export function migrateSchema(db) {
         gate_index INTEGER NOT NULL, policy_hash TEXT NOT NULL, actor TEXT NOT NULL,
         model_profile TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('passed', 'failed', 'blocked')),
         exit_code INTEGER, duration_ms INTEGER NOT NULL, summary TEXT, artifact_hash TEXT,
+        lease_run_id TEXT, evidence_payload JSON,
         started_at DATETIME DEFAULT CURRENT_TIMESTAMP, finished_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
         FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE SET NULL
       );
-      INSERT INTO gate_runs_p2 SELECT * FROM gate_runs;
+      INSERT INTO gate_runs_p2 (id, task_id, feature_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash, lease_run_id, evidence_payload, started_at, finished_at)
+        SELECT id, task_id, feature_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash, lease_run_id, evidence_payload, started_at, finished_at FROM gate_runs;
       DROP TABLE gate_runs;
       ALTER TABLE gate_runs_p2 RENAME TO gate_runs;
       CREATE INDEX IF NOT EXISTS idx_gate_runs_task ON gate_runs(task_id, started_at);
       CREATE INDEX IF NOT EXISTS idx_gate_runs_hash ON gate_runs(policy_hash);
     `);
   }
+  const eventCols = db.prepare('PRAGMA table_info(settlement_events)').all().map(c => c.name);
+  if (eventCols.length && !eventCols.includes('lease_run_id')) db.exec('ALTER TABLE settlement_events ADD COLUMN lease_run_id TEXT;');
+  if (eventCols.length) db.exec("UPDATE settlement_events SET lease_run_id = json_extract(evidence_payload, '$.lease_run_id') WHERE lease_run_id IS NULL AND json_valid(evidence_payload) AND json_extract(evidence_payload, '$.lease_run_id') IS NOT NULL;");
 }
 
 export function initSchema(db) {
@@ -502,7 +512,8 @@ export function recordSettlementEvent(db, event) {
     action,
     commit_ref,
     artifact_hash = null,
-    evidence_payload = null
+    evidence_payload = null,
+    lease_run_id = null
   } = event;
 
   if (!actor || !action || !commit_ref) {
@@ -513,10 +524,13 @@ export function recordSettlementEvent(db, event) {
     ? (typeof evidence_payload === 'string' ? evidence_payload : JSON.stringify(evidence_payload))
     : null;
 
+  let resolvedLeaseRunId = lease_run_id;
+  if (!resolvedLeaseRunId && evidence_payload && typeof evidence_payload === 'object') resolvedLeaseRunId = evidence_payload.lease_run_id || null;
+  if (!resolvedLeaseRunId && task_id) resolvedLeaseRunId = db.prepare('SELECT lease_run_id FROM tasks WHERE id = ?').get(task_id)?.lease_run_id || null;
   const stmt = db.prepare(`
     INSERT INTO settlement_events (
-      task_id, feature_id, actor, action, commit_ref, artifact_hash, evidence_payload
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      task_id, feature_id, actor, action, commit_ref, artifact_hash, evidence_payload, lease_run_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = stmt.run(
@@ -526,7 +540,8 @@ export function recordSettlementEvent(db, event) {
     action,
     commit_ref,
     artifact_hash,
-    payloadJson
+    payloadJson,
+    resolvedLeaseRunId
   );
 
   checkpointState(db);
