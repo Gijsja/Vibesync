@@ -1,0 +1,3 @@
+## 2024-05-18 - Avoid frequent synchronous execSync calls in hot paths
+**Learning:** `getPayload` in `src/server.mjs` was executing `execSync` via `execGitWithBackoff` to determine the git HEAD hash. This function is called extremely frequently, such as every second by the SSE broadcast interval. Spawning a child process in a tight interval causes excessive event loop blocking and CPU usage overhead in Node.js.
+**Action:** Replace `execSync` queries for simple Git states (like reading the current HEAD) with direct native `fs.readFileSync` file interactions within `.git/HEAD` and `.git/packed-refs`. It's significantly faster (~100x improvement) and reduces load on the main thread for frequent reads.
