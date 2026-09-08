@@ -24,7 +24,7 @@ export function checkpointState(db, explicitRoot) {
     const tables = {};
     db.exec('SAVEPOINT checkpoint_read');
     try {
-      for (const table of STATE_TABLES) tables[table] = db.prepare(`SELECT * FROM ${table} ORDER BY id`).all();
+      for (const table of STATE_TABLES) tables[table] = db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all();
     } finally { db.exec('RELEASE checkpoint_read'); }
     const entries = [];
     const artifacts = [...new Set(tables.settlement_events.map(event => event.artifact_hash).filter(hash => /^[a-f0-9]{12}$/.test(hash || '')))];
@@ -86,7 +86,7 @@ export function restoreStateCheckpoint(db, root, checkpoint) {
   for (const [hash, content] of Object.entries(checkpoint.logs)) {
     const target = path.join(directory, `${hash}.log`);
     const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
-    fs.writeFileSync(temporary, content, { flag: 'wx' });
+    fs.writeFileSync(temporary, content, { flag: 'w' });
     fs.renameSync(temporary, target);
   }
   return { featuresCount: checkpoint.tables.features.length, tasksCount: checkpoint.tables.tasks.length,

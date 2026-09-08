@@ -238,6 +238,7 @@ test('AI Provider Quota & 5-Hour Usage Suite', async (t) => {
         assert.equal(taskRes.status, 200);
         const taskData = await taskRes.json();
         assert.equal(taskData.task.assigned_actor, 'anthropic-claude');
+        assert.equal(db.prepare('SELECT assigned_actor FROM tasks WHERE id = ?').get('TASK-CLAUDE.1').assigned_actor, 'anthropic-claude');
 
       } finally {
         await serverInstance.close();

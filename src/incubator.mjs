@@ -330,7 +330,7 @@ export function parkInsight(params, db = getDb(), repoRoot = process.cwd()) {
 
       let currentHead = 'detached';
       try {
-        currentHead = execGitWithBackoff('git rev-parse --short HEAD', { cwd: repoRoot });
+        currentHead = execGitWithBackoff(['rev-parse', '--short', 'HEAD'], { cwd: repoRoot });
       } catch {}
 
       recordSettlementEvent(db, {
@@ -357,7 +357,7 @@ export function parkInsight(params, db = getDb(), repoRoot = process.cwd()) {
 
   let currentHead = 'detached';
   try {
-    currentHead = execGitWithBackoff('git rev-parse --short HEAD', { cwd: repoRoot });
+    currentHead = execGitWithBackoff(['rev-parse', '--short', 'HEAD'], { cwd: repoRoot });
   } catch {}
 
   recordSettlementEvent(db, {
@@ -569,7 +569,7 @@ export function mergeIncubatorItems(params, db = getDb(), repoRoot = process.cwd
 
   let currentHead = 'detached';
   try {
-    currentHead = execGitWithBackoff('git rev-parse --short HEAD', { cwd: repoRoot });
+    currentHead = execGitWithBackoff(['rev-parse', '--short', 'HEAD'], { cwd: repoRoot });
   } catch {}
 
   recordSettlementEvent(db, {

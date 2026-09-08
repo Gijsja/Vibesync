@@ -17,7 +17,7 @@ import { beginOperation, assertWorkspaceIdle } from './operations.mjs';
 import { startTask } from './workspace.mjs';
 import { featureInput, taskInput } from './input.mjs';
 import { claimTask, createTask, releaseTaskLease, getTask, listTasks } from './tasks.mjs';
-import { settleFeature, createFeature, getFeature } from './features.mjs';
+import { createFeature, getFeature } from './features.mjs';
 import { parkInsight, mergeIncubatorItems, getConventions, getIncubatorItem, promoteIncubatorItem } from './incubator.mjs';
 import { verifyAndSettleTask } from './settle.mjs';
 import { getPayload } from './server.mjs';
@@ -297,13 +297,14 @@ export function createMcpServer(options = {}) {
 
       if (name === 'vibesync_verify_and_settle') {
         const managedTask = db.prepare('SELECT worktree_path FROM tasks WHERE id = ?').get(args.task_id);
+        const resolvedWorktreePath = args.worktree_path || managedTask?.worktree_path;
         const result = managedTask?.worktree_path && !args.worktree_path
           ? await beginOperation('task', args.task_id, args.actor_name, db, repoRoot, onUpdate || (() => {})).completion
           : verifyAndSettleTask(
           {
             taskId: args.task_id,
             actorName: args.actor_name,
-            worktreePath: args.worktree_path || db.prepare('SELECT worktree_path FROM tasks WHERE id = ?').get(args.task_id)?.worktree_path,
+            worktreePath: resolvedWorktreePath,
             discovered_insights: args.discovered_insights,
             repoRoot,
             db
@@ -418,16 +419,7 @@ export function createMcpServer(options = {}) {
       }
 
       if (name === 'vibesync_settle_feature') {
-        const result = db.prepare('PRAGMA database_list').all().some(row => row.file)
-          ? await beginOperation('feature', args.feature_id, args.actor_name, db, repoRoot, onUpdate || (() => {})).completion
-          : settleFeature(
-          {
-            featureId: args.feature_id,
-            actorName: args.actor_name
-          },
-          db,
-          repoRoot
-        );
+        const result = await beginOperation('feature', args.feature_id, args.actor_name, db, repoRoot, onUpdate || (() => {})).completion;
 
         if (onUpdate) onUpdate();
 

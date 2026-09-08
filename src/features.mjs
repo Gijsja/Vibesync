@@ -285,7 +285,7 @@ export function settleFeature(params, db = getDb(), repoRoot = process.cwd()) {
   // 3. Resolve Git HEAD SHA
   let settledCommit = '0000000';
   try {
-    settledCommit = execGitWithBackoff('git rev-parse HEAD', { cwd: repoRoot });
+    settledCommit = execGitWithBackoff(['rev-parse', 'HEAD'], { cwd: repoRoot });
   } catch {}
 
   // 4. Update Feature to Settled

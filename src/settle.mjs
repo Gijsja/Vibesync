@@ -531,10 +531,27 @@ export function verifyAndSettleTask(params, maybeDb, maybeRepoRoot) {
       task: settleResult.task
     };
   } catch (err) {
+    // Record the settlement infrastructure failure so the strike counter advances
+    // and the audit ledger has a trace. Stage D errors (stash, commit, git failures)
+    // would otherwise leave the task stuck in_progress with no forensic evidence.
+    let failInfo = null;
+    try {
+      failInfo = recordGateFailure(db, task, `Settlement infrastructure error: ${err.message}`, {
+        actorName,
+        repoRoot
+      });
+    } catch {}
     return {
       success: false,
       phase: err.phase || 'ROLLBACK',
-      error: err.message
+      error: err.message,
+      ...(failInfo && {
+        status: failInfo.status,
+        consecutiveFailures: failInfo.consecutiveFailures,
+        consecutive_failures: failInfo.consecutive_failures,
+        is_blocked: failInfo.is_blocked,
+        artifactHash: failInfo.artifactHash
+      })
     };
   }
 }

@@ -20,7 +20,7 @@ import { runCommand } from './commands.mjs';
  */
 export function getGitHead(repoRoot = process.cwd()) {
   try {
-    return execGitWithBackoff('git rev-parse --short HEAD', { cwd: repoRoot });
+    return execGitWithBackoff(['rev-parse', '--short', 'HEAD'], { cwd: repoRoot });
   } catch {
     return '0000000';
   }

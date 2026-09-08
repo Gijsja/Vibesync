@@ -13,7 +13,7 @@ import { beginOperation, listOperations, assertWorkspaceIdle } from './operation
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDb, recordSettlementEvent, readArtifact, checkpointState } from './db.mjs';
-import { listTasks, ejectTaskToHuman, createTask, releaseTaskLease, checkAndExpireLeases } from './tasks.mjs';
+import { listTasks, ejectTaskToHuman, createTask, updateTask, releaseTaskLease, checkAndExpireLeases } from './tasks.mjs';
 import { listFeatures, createFeature } from './features.mjs';
 import { listIncubatorRecords, parkInsight, execGitWithBackoff, promoteIncubatorItem, discardIncubatorItem, getIncubatorItem, mergeIncubatorItems, promoteMultipleIncubatorItems, getConventions } from './incubator.mjs';
 import {
@@ -531,7 +531,7 @@ export async function startServer(options = {}) {
         const task = createTask(input, db);
 
         if (body.assigned_actor) {
-          db.prepare("UPDATE tasks SET assigned_actor = ? WHERE id = ?").run(body.assigned_actor, body.id);
+          updateTask(task.id, { assigned_actor: body.assigned_actor }, db);
           task.assigned_actor = body.assigned_actor;
         }
 

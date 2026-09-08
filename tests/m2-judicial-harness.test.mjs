@@ -939,6 +939,47 @@ describe('Suite 10: Unified verifyAndSettleTask Pipeline End-to-End', () => {
       assert.strictEqual(sandbox.isWorkingTreeClean(), true);
     });
   });
+
+  it('Case 10.5: Records Stage D infrastructure failures and advances the circuit breaker', async () => {
+    await withSandbox(async (sandbox) => {
+      const db = sandbox.registerDb(getDb(path.join(sandbox.dir, '.vibesync', 'state.db'), sandbox.dir));
+      createFeature({ id: 'FEAT-E2E5', title: 'E2E Feature 5', target_milestone: 'M2', spec_markdown: '# spec' }, db);
+      createTask({
+        id: 'TASK-E2E5',
+        feature_id: 'FEAT-E2E5',
+        title: 'E2E Settlement Failure Task',
+        allowed_paths: ['src/**'],
+        required_gates: []
+      }, db);
+
+      const claim = claimTask({ taskId: 'TASK-E2E5', actorName: 'gemini-antigravity' }, db, sandbox.dir);
+      sandbox.createBranch(claim.task.branch_name, 'main', true);
+      sandbox.commitFile('src/overlap.js', 'task version\n', 'feat: task version');
+      sandbox.checkout('main');
+      fs.mkdirSync(path.join(sandbox.dir, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(sandbox.dir, 'src', 'overlap.js'), 'uncommitted version\n');
+
+      const res = verifyAndSettleTask({
+        taskId: 'TASK-E2E5',
+        actorName: 'gemini-antigravity',
+        repoRoot: sandbox.dir,
+        db
+      });
+
+      assert.strictEqual(res.success, false);
+      assert.strictEqual(res.phase, 'WORKING_TREE_CONFLICT');
+      assert.strictEqual(res.consecutive_failures, 1);
+      assert.strictEqual(res.status, 'in_progress');
+
+      const task = getTask('TASK-E2E5', db);
+      assert.strictEqual(task.consecutive_failures, 1);
+      assert.strictEqual(task.status, 'in_progress');
+
+      const event = db.prepare("SELECT * FROM settlement_events WHERE task_id = ? AND action = 'gate_failed' ORDER BY id DESC LIMIT 1").get('TASK-E2E5');
+      assert(event, 'Stage D failure should be recorded in the settlement audit ledger');
+      assert.match(event.evidence_payload, /Settlement infrastructure error/);
+    });
+  });
 });
 
 // ============================================================================

@@ -226,6 +226,7 @@ export function updateTask(id, updates, db = getDb()) {
     'priority',
     'labels',
     'external_ref',
+    'assigned_actor',
     'allowed_paths',
     'required_gates',
   ];
@@ -238,12 +239,6 @@ export function updateTask(id, updates, db = getDb()) {
       if (key === 'priority') {
         if (!PRIORITY_LEVELS.includes(value)) {
           throw new Error(`Invalid task priority: "${value}". Must be one of: ${PRIORITY_LEVELS.join(', ')}`);
-        }
-        setClauses.push(`${key} = ?`);
-        args.push(value);
-      } else if (key === 'status') {
-        if (!TASK_STATUSES.includes(value)) {
-          throw new Error(`Invalid task status: "${value}". Must be one of: ${TASK_STATUSES.join(', ')}`);
         }
         setClauses.push(`${key} = ?`);
         args.push(value);
@@ -383,7 +378,7 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
   const branchName = `task/${taskId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
   let baseCommit = '0000000';
   try {
-    baseCommit = execGitWithBackoff('git rev-parse --short HEAD', { cwd: repoRoot });
+    baseCommit = execGitWithBackoff(['rev-parse', '--short', 'HEAD'], { cwd: repoRoot });
   } catch {}
 
   // 5. Atomic Lease Execution (45-min TTL)
@@ -507,7 +502,7 @@ export function ejectTaskToHuman(taskId, db = getDb(), repoRoot = process.cwd())
 
   let commitRef = 'HEAD';
   try {
-    commitRef = execGitWithBackoff('git rev-parse --short HEAD', { cwd: repoRoot });
+    commitRef = execGitWithBackoff(['rev-parse', '--short', 'HEAD'], { cwd: repoRoot });
   } catch {}
 
   recordSettlementEvent(db, {
