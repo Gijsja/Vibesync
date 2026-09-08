@@ -108,6 +108,13 @@ detects tracked and non-ignored writes; required Bubblewrap is the boundary for
 transient or ignored-path activity and mounts only the declared write roots as
 writable.
 
+Gate execution is governed by the `resource_policy` object in the same file.
+Global and per-actor concurrency limits, timeout ceilings, and output ceilings
+apply to setup, task, partial, and feature checks. Local-model actors default to
+one concurrent gate. Workers may call `vibesync_partial_verify` for early feedback,
+but only structured commands declared `idempotency: safe` are eligible and a
+partial run never settles the task or changes its owner.
+
 ## A few useful boundaries
 
 VibeSync is a **trusted local development tool**. The default process sandbox is

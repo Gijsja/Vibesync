@@ -10,6 +10,7 @@ import { getDb, initSchema } from './db.mjs';
 import { execGitWithBackoff } from './incubator.mjs';
 import { getDbPath, INCUBATOR_BRANCH, GIT_NOTES_REF } from './config.mjs';
 import { getGitNote } from './settle.mjs';
+import { cleanAbandonedGateSlots } from './scheduler.mjs';
 
 /**
  * Reconstructs the entire relational SQLite database from Git Merkle history,
@@ -23,6 +24,7 @@ export function repairDatabase(repoRoot = process.cwd(), customDb = null) {
   const checkpoint = readStateCheckpoint(repoRoot);
   const db = customDb || getDb(getDbPath(repoRoot), repoRoot);
   initSchema(db);
+  cleanAbandonedGateSlots(db);
   if (checkpoint) return { ...restoreStateCheckpoint(db, repoRoot, checkpoint), dbPath: getDbPath(repoRoot) };
 
   let restoredFeatures = 0;

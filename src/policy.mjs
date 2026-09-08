@@ -12,11 +12,19 @@ export const MODEL_PROFILES = Object.freeze({
   // Gemini and Claude allow longer reasoning intervals before stagnation is flagged.
   // Codex uses a shorter implementation-oriented cadence.
   // Local models send frequent liveness checks but have a longer progress window.
-  gemini: { id: 'gemini', execution: 'hosted', strengths: ['planning', 'large-context'], heartbeatMinutes: 10, leaseMinutes: 45, resourceClass: 'standard', stagnantWarningBeats: 3, stagnantGraceBeats: 2, stagnantExpiryBeats: 2 },
-  claude:  { id: 'claude', execution: 'hosted', strengths: ['review', 'reasoning'], heartbeatMinutes: 10, leaseMinutes: 45, resourceClass: 'standard', stagnantWarningBeats: 3, stagnantGraceBeats: 2, stagnantExpiryBeats: 2 },
-  codex:   { id: 'codex', execution: 'hosted', strengths: ['implementation', 'testing'], heartbeatMinutes: 8, leaseMinutes: 45, resourceClass: 'standard', stagnantWarningBeats: 2, stagnantGraceBeats: 1, stagnantExpiryBeats: 2 },
-  local:   { id: 'local', execution: 'local', strengths: ['private', 'offline', 'low-cost'], heartbeatMinutes: 3, leaseMinutes: 60, resourceClass: 'constrained', stagnantWarningBeats: 4, stagnantGraceBeats: 3, stagnantExpiryBeats: 3 },
-  generic: { id: 'generic', execution: 'unknown', strengths: [], heartbeatMinutes: 8, leaseMinutes: 45, resourceClass: 'standard', stagnantWarningBeats: 2, stagnantGraceBeats: 2, stagnantExpiryBeats: 2 }
+  gemini: { id: 'gemini', execution: 'hosted', strengths: ['planning', 'large-context'], heartbeatMinutes: 10, leaseMinutes: 45, resourceClass: 'standard', maxConcurrentGates: 2, stagnantWarningBeats: 3, stagnantGraceBeats: 2, stagnantExpiryBeats: 2 },
+  claude:  { id: 'claude', execution: 'hosted', strengths: ['review', 'reasoning'], heartbeatMinutes: 10, leaseMinutes: 45, resourceClass: 'standard', maxConcurrentGates: 2, stagnantWarningBeats: 3, stagnantGraceBeats: 2, stagnantExpiryBeats: 2 },
+  codex:   { id: 'codex', execution: 'hosted', strengths: ['implementation', 'testing'], heartbeatMinutes: 8, leaseMinutes: 45, resourceClass: 'standard', maxConcurrentGates: 2, stagnantWarningBeats: 2, stagnantGraceBeats: 1, stagnantExpiryBeats: 2 },
+  local:   { id: 'local', execution: 'local', strengths: ['private', 'offline', 'low-cost'], heartbeatMinutes: 3, leaseMinutes: 60, resourceClass: 'constrained', maxConcurrentGates: 1, stagnantWarningBeats: 4, stagnantGraceBeats: 3, stagnantExpiryBeats: 3 },
+  generic: { id: 'generic', execution: 'unknown', strengths: [], heartbeatMinutes: 8, leaseMinutes: 45, resourceClass: 'standard', maxConcurrentGates: 2, stagnantWarningBeats: 2, stagnantGraceBeats: 2, stagnantExpiryBeats: 2 }
+});
+
+export const DEFAULT_RESOURCE_POLICY = Object.freeze({
+  max_concurrent_gates: 4,
+  max_concurrent_gates_per_actor: 2,
+  timeout_ceiling_ms: 3600000,
+  output_limit_bytes: 10 * 1024 * 1024,
+  retry_after_ms: 1000
 });
 
 export function identifyModelProfile(actorName = '') {
@@ -35,12 +43,20 @@ export function getExecutionPolicy(repoRoot = process.cwd()) {
     sandbox_mode: 'process',
     network_default: false,
     allow_legacy_commands: true,
-    redact_logs: true
+    redact_logs: true,
+    resource_policy: DEFAULT_RESOURCE_POLICY
   };
   const policyPath = path.join(repoRoot, '.vibesync', 'policy.json');
   try {
     const configured = JSON.parse(fs.readFileSync(policyPath, 'utf8'));
-    const policy = { ...defaults, ...configured };
+    const resource = { ...DEFAULT_RESOURCE_POLICY, ...(configured.resource_policy || {}) };
+    for (const [key, value] of Object.entries(resource)) {
+      if (!Number.isInteger(value) || value < 1) throw new Error(`resource_policy.${key} must be a positive integer.`);
+    }
+    if (resource.max_concurrent_gates > 64 || resource.max_concurrent_gates_per_actor > 64) throw new Error('Gate concurrency limits cannot exceed 64.');
+    if (resource.timeout_ceiling_ms > 3600000) throw new Error('Gate timeout ceiling cannot exceed 3600000ms.');
+    if (resource.output_limit_bytes > 100 * 1024 * 1024) throw new Error('Gate output limit cannot exceed 104857600 bytes.');
+    const policy = { ...defaults, ...configured, resource_policy: resource };
     if (!['audit', 'enforce'].includes(policy.approval_mode)) throw new Error('approval_mode must be audit or enforce.');
     if (!['process', 'auto', 'required'].includes(policy.sandbox_mode)) throw new Error('sandbox_mode must be process, auto, or required.');
     return policy;

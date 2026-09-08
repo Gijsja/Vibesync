@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 export const STATE_REF = 'refs/heads/vibesync/state';
-export const STATE_TABLES = ['features', 'tasks', 'incubator', 'settlement_events', 'operations', 'gate_approvals', 'gate_runs'];
+export const STATE_TABLES = ['features', 'tasks', 'incubator', 'settlement_events', 'operations', 'gate_approvals', 'gate_runs', 'gate_slots'];
 const roots = new WeakMap();
 export function registerStateRoot(db, root) { roots.set(db, root); }
 function git(root, args, input) {

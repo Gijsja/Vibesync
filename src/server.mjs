@@ -25,6 +25,7 @@ import {
 import { computeProviderUsage, updateProviderUsageConfig } from './usage.mjs';
 import { previewTask, previewFeature } from './policy.mjs';
 import { scanSecretEntries } from './secrets.mjs';
+import { cleanAbandonedGateSlots } from './scheduler.mjs';
 
 function scanChangedWorkspaceSecrets(repoRoot) {
   const files = execGitWithBackoff(['ls-files', '-m', '-o', '--exclude-standard', '-z'], { cwd: repoRoot, raw: true }).split('\0').filter(Boolean);
@@ -283,6 +284,7 @@ export async function startServer(options = {}) {
   const host = options.host || DEFAULT_HTTP_HOST;
   const repoRoot = options.repoRoot || process.cwd();
   const db = options.db || getDb(null, repoRoot);
+  cleanAbandonedGateSlots(db);
   const quiet = Boolean(options.quiet);
 
   const clients = new Set();

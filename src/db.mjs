@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS gate_runs (
     id TEXT PRIMARY KEY,
     task_id TEXT,
     feature_id TEXT,
-    phase TEXT NOT NULL CHECK(phase IN ('setup', 'gate', 'feature')),
+    phase TEXT NOT NULL CHECK(phase IN ('setup', 'gate', 'feature', 'partial')),
     gate_index INTEGER NOT NULL,
     policy_hash TEXT NOT NULL,
     actor TEXT NOT NULL,
@@ -198,6 +198,17 @@ CREATE INDEX IF NOT EXISTS idx_incubator_status ON incubator(status);
 CREATE INDEX IF NOT EXISTS idx_settlement_timestamp ON settlement_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_settlement_task ON settlement_events(task_id);
 CREATE INDEX IF NOT EXISTS idx_settlement_feature ON settlement_events(feature_id);
+
+-- Phase 2: Gate resource scheduling — active gate-execution slots
+CREATE TABLE IF NOT EXISTS gate_slots (
+    id TEXT PRIMARY KEY,
+    actor TEXT NOT NULL,
+    task_id TEXT,
+    phase TEXT NOT NULL DEFAULT 'gate',
+    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    pid INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gate_slots_actor ON gate_slots(actor);
 `;
 
 let _activeDb = null;
@@ -382,6 +393,26 @@ export function migrateSchema(db) {
   if (approvalCols.length && !approvalCols.includes('feature_id')) db.exec('ALTER TABLE gate_approvals ADD COLUMN feature_id TEXT REFERENCES features(id) ON DELETE CASCADE;');
   const runCols = db.prepare('PRAGMA table_info(gate_runs)').all().map(c => c.name);
   if (runCols.length && !runCols.includes('feature_id')) db.exec('ALTER TABLE gate_runs ADD COLUMN feature_id TEXT REFERENCES features(id) ON DELETE SET NULL;');
+  const runsDdl = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='gate_runs'").get()?.sql || '';
+  if (runsDdl && !runsDdl.includes("'partial'")) {
+    db.exec(`
+      CREATE TABLE gate_runs_p2 (
+        id TEXT PRIMARY KEY, task_id TEXT, feature_id TEXT,
+        phase TEXT NOT NULL CHECK(phase IN ('setup', 'gate', 'feature', 'partial')),
+        gate_index INTEGER NOT NULL, policy_hash TEXT NOT NULL, actor TEXT NOT NULL,
+        model_profile TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('passed', 'failed', 'blocked')),
+        exit_code INTEGER, duration_ms INTEGER NOT NULL, summary TEXT, artifact_hash TEXT,
+        started_at DATETIME DEFAULT CURRENT_TIMESTAMP, finished_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+        FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE SET NULL
+      );
+      INSERT INTO gate_runs_p2 SELECT * FROM gate_runs;
+      DROP TABLE gate_runs;
+      ALTER TABLE gate_runs_p2 RENAME TO gate_runs;
+      CREATE INDEX IF NOT EXISTS idx_gate_runs_task ON gate_runs(task_id, started_at);
+      CREATE INDEX IF NOT EXISTS idx_gate_runs_hash ON gate_runs(policy_hash);
+    `);
+  }
 }
 
 export function initSchema(db) {

@@ -13,6 +13,7 @@ import { MAX_FAILURES } from './config.mjs';
 import { runCommand } from './commands.mjs';
 import { randomUUID } from 'node:crypto';
 import { resolveCommandSpec, requireCommandApproval, identifyModelProfile, getExecutionPolicy, prepareSandboxedCommand } from './policy.mjs';
+import { acquireGateSlot, releaseGateSlot } from './scheduler.mjs';
 
 /**
  * Resolves current Git HEAD commit SHA safely.
@@ -95,13 +96,29 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
   }
 
   const gatesRun = [];
+  const phase = opts.phase || 'gate';
+  const policy = getExecutionPolicy(opts.repoRoot || cwd);
+  let slot = null;
+  if (opts.db && gatesList.length) {
+    slot = acquireGateSlot(opts.db, opts.actorName || 'unknown', opts.taskId || null, phase, policy.resource_policy);
+    if (!slot.acquired) {
+      const failedGate = { cmd: null, argv: [], exitCode: null, summary: slot.reason, error: slot.reason, code: 'GATE_CAPACITY' };
+      return { success: false, pass: false, gatesRun, failedGate, queuePosition: slot.queuePosition,
+        activeLimits: slot.activeLimits, retryAfterMs: policy.resource_policy.retry_after_ms,
+        errorPayload: { code: 'GATE_CAPACITY', failure: slot.reason } };
+    }
+  }
 
+  try {
   for (let gateIndex = 0; gateIndex < gatesList.length; gateIndex++) {
     const gate = gatesList[gateIndex];
     let spec;
     let approval;
     try {
-      spec = resolveCommandSpec(gate, { cwd, phase: opts.phase || 'gate' });
+      spec = resolveCommandSpec(gate, { cwd, phase: phase === 'partial' ? 'gate' : phase });
+      if (phase === 'partial' && (spec.legacy || spec.idempotency !== 'safe')) {
+        throw Object.assign(new Error('Partial verification requires structured commands declared idempotency: safe.'), { code: 'PARTIAL_GATE_UNSAFE' });
+      }
       approval = opts.db ? requireCommandApproval(spec, opts.db, opts.repoRoot || cwd) : { approved: false, runnable: true, mode: 'untracked', warning: null };
     } catch (error) {
       const failedGate = { cmd: typeof gate === 'string' ? gate : JSON.stringify(gate), argv: [], exitCode: 1, summary: error.message, error: error.message, code: error.code, policyHash: error.policyHash };
@@ -121,9 +138,12 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
     }
     const started = Date.now();
     const modelProfile = identifyModelProfile(opts.actorName);
-    const resourceMaxBuffer = modelProfile.resourceClass === 'constrained' ? 5 * 1024 * 1024 : 10 * 1024 * 1024;
-    const res = runGateCommand(sandbox.argv, cwd, { ...opts, maxBuffer: Math.min(opts.maxBuffer || resourceMaxBuffer, resourceMaxBuffer),
-      timeoutMs: spec.timeout_ms || opts.timeoutMs || opts.timeout, redactLogs: getExecutionPolicy(opts.repoRoot || cwd).redact_logs !== false });
+    const profileMaxBuffer = modelProfile.resourceClass === 'constrained' ? 5 * 1024 * 1024 : 10 * 1024 * 1024;
+    const requestedTimeout = spec.timeout_ms || opts.timeoutMs || opts.timeout || policy.resource_policy.timeout_ceiling_ms;
+    const timeoutMs = Math.min(requestedTimeout, policy.resource_policy.timeout_ceiling_ms);
+    const maxBuffer = Math.min(opts.maxBuffer || profileMaxBuffer, profileMaxBuffer, policy.resource_policy.output_limit_bytes);
+    const res = runGateCommand(sandbox.argv, cwd, { ...opts, maxBuffer, timeoutMs,
+      redactLogs: policy.redact_logs !== false });
     const durationMs = Date.now() - started;
     let writeScope;
     try {
@@ -144,7 +164,7 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
       if (!res.success) artifactHash = saveArtifact(JSON.stringify({ stdout: res.stdout, stderr: res.stderr, diagnostics: res.diagnostics, writeScope }, null, 2), opts.repoRoot || cwd);
       opts.db.prepare(`INSERT INTO gate_runs (id, task_id, phase, gate_index, policy_hash, actor, model_profile, status, exit_code, duration_ms, summary, artifact_hash)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(randomUUID(), opts.taskId, opts.phase || 'gate', gateIndex, spec.policyHash, opts.actorName || 'unknown', modelProfile.id,
+        .run(randomUUID(), opts.taskId, phase, gateIndex, spec.policyHash, opts.actorName || 'unknown', modelProfile.id,
           res.success ? 'passed' : 'failed', res.exitCode, durationMs, res.summary || null, artifactHash);
       if (spec.idempotency === 'unsafe' && approval.approved) {
         opts.db.prepare('UPDATE gate_approvals SET revoked_at = CURRENT_TIMESTAMP WHERE policy_hash = ?').run(spec.policyHash);
@@ -174,12 +194,37 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
   return {
     success: true,
     pass: true,
-    gatesRun
+    gatesRun,
+    activeLimits: slot?.activeLimits || null
   };
+  } finally {
+    if (slot?.slotId) releaseGateSlot(opts.db, slot.slotId);
+  }
 }
 
 // Aliases for executeGates
 export const executeAllGates = executeGates;
+
+/** Run a safe subset of a task's declared gates without settling or changing ownership. */
+export function executePartialVerification({ taskId, actorName, indices = null, repoRoot = process.cwd() }, db = getDb()) {
+  const task = getTask(taskId, db);
+  if (!task) throw new Error(`Task ${taskId} not found.`);
+  if (task.status !== 'in_progress' || task.assigned_actor !== actorName) {
+    throw Object.assign(new Error(`Task ${taskId} is not actively leased to ${actorName}.`), { code: 'LEASE_OWNER_MISMATCH' });
+  }
+  const lease = db.prepare("SELECT datetime(lease_expires_at) <= datetime('now') AS expired FROM tasks WHERE id = ?").get(taskId);
+  if (lease?.expired) throw Object.assign(new Error(`Task ${taskId} lease expired.`), { code: 'LEASE_EXPIRED' });
+  const allGates = task.required_gates || [];
+  const selectedIndices = indices === null ? allGates.map((_, index) => index) : indices;
+  if (!Array.isArray(selectedIndices) || selectedIndices.some(index => !Number.isInteger(index) || index < 0 || index >= allGates.length)) {
+    throw new Error('indices must identify existing task gates.');
+  }
+  const gates = selectedIndices.map(index => allGates[index]);
+  const result = executeGates(gates, { cwd: task.worktree_path || repoRoot, db, taskId, actorName, repoRoot,
+    allowedPaths: task.allowed_paths, phase: 'partial' });
+  return { ...result, phase: result.success ? 'PARTIAL_GATES_PASSED' : (result.failedGate?.code || 'PARTIAL_GATE_FAILURE'),
+    taskId, indices: selectedIndices, ownershipChanged: false, settled: false };
+}
 
 /**
  * Records a gate, scope, or collision failure: updates failure counters,

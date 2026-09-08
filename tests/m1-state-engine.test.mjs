@@ -104,7 +104,7 @@ describe('Milestone 1 State Engine Unit Tests', () => {
     const tables = db.prepare(`
       SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;
     `).all().map(r => r.name);
-    assert.deepEqual(tables, ['features', 'gate_approvals', 'gate_runs', 'incubator', 'operations', 'settlement_events', 'tasks']);
+    assert.deepEqual(tables, ['features', 'gate_approvals', 'gate_runs', 'gate_slots', 'incubator', 'operations', 'settlement_events', 'tasks']);
 
     const indices = db.prepare(`
       SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' ORDER BY name;
@@ -113,6 +113,7 @@ describe('Milestone 1 State Engine Unit Tests', () => {
       'idx_features_status',
       'idx_gate_runs_hash',
       'idx_gate_runs_task',
+      'idx_gate_slots_actor',
       'idx_incubator_status',
       'idx_one_running_operation',
       'idx_settlement_feature',

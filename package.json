@@ -15,6 +15,7 @@
     "./gatekeeper": "./src/gatekeeper.mjs",
     "./policy": "./src/policy.mjs",
     "./fingerprint": "./src/fingerprint.mjs",
+    "./scheduler": "./src/scheduler.mjs",
     "./merge": "./src/merge.mjs",
     "./settle": "./src/settle.mjs",
     "./server": "./src/server.mjs",

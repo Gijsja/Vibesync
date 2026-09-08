@@ -12,6 +12,7 @@ import { runCommand } from './commands.mjs';
 import { randomUUID } from 'node:crypto';
 import { resolveCommandSpec, requireCommandApproval, prepareSandboxedCommand, identifyModelProfile, getExecutionPolicy } from './policy.mjs';
 import { captureWorkspaceState, validateWorkspaceWriteDelta } from './guard.mjs';
+import { acquireGateSlot, releaseGateSlot } from './scheduler.mjs';
 
 /**
  * Validates feature identifier syntax.
@@ -262,10 +263,16 @@ export function settleFeature(params, db = getDb(), repoRoot = process.cwd()) {
   if (feature.holistic_gate_cmd && (typeof feature.holistic_gate_cmd !== 'string' || feature.holistic_gate_cmd.trim() !== '')) {
     const spec = resolveCommandSpec(feature.holistic_gate_cmd, { cwd: repoRoot, phase: 'feature' });
     const approval = requireCommandApproval(spec, db, repoRoot);
+    const policy = getExecutionPolicy(repoRoot);
+    const slot = acquireGateSlot(db, actorName, null, 'feature', policy.resource_policy);
+    if (!slot.acquired) throw Object.assign(new Error(slot.reason), { code: 'GATE_CAPACITY', ...slot, retryAfterMs: policy.resource_policy.retry_after_ms });
+    try {
     const sandbox = prepareSandboxedCommand(spec, repoRoot, repoRoot, ['*']);
     const beforeState = captureWorkspaceState(repoRoot);
     const started = Date.now();
-    const proc = runCommand(sandbox.argv, { cwd: repoRoot, timeoutMs: spec.timeout_ms || 300000, redactLogs: getExecutionPolicy(repoRoot).redact_logs !== false });
+    const proc = runCommand(sandbox.argv, { cwd: repoRoot,
+      timeoutMs: Math.min(spec.timeout_ms || 300000, policy.resource_policy.timeout_ceiling_ms),
+      maxBuffer: policy.resource_policy.output_limit_bytes, redactLogs: policy.redact_logs !== false });
     const durationMs = Date.now() - started;
     const writeScope = validateWorkspaceWriteDelta(beforeState, captureWorkspaceState(repoRoot), ['*'], spec.write_paths);
     if (!writeScope.valid) {
@@ -301,6 +308,9 @@ export function settleFeature(params, db = getDb(), repoRoot = process.cwd()) {
       });
 
       throw new Error(`Holistic feature gate failed (exit code ${proc.exitCode}): ${proc.summary || proc.error}`);
+    }
+    } finally {
+      releaseGateSlot(db, slot.slotId);
     }
   }
 

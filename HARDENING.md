@@ -45,6 +45,10 @@ unauthenticated local HTTP API.
   reassigned leases reject stale heartbeats, and settlement/release clears tokens.
 - High-confidence secret patterns are rejected before task settlement and direct
   hotfix staging; findings identify file and category without echoing the secret.
+- SQLite-backed gate slots enforce global and per-actor concurrency across
+  processes. Every exit path releases its slot; abandoned slots are reclaimed by
+  PID or a bounded TTL. Project policy caps time and output, and partial
+  verification accepts only structured, explicitly safe commands.
 - Repair restores durable Git snapshots into a replacement database, preserving
   backups of the original database and its sidecars.
 - Initialization preserves existing MCP bindings, dashboards, and user files.

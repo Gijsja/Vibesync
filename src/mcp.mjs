@@ -20,6 +20,7 @@ import { claimTask, createTask, releaseTaskLease, heartbeatTaskLease, getTask, l
 import { createFeature, getFeature } from './features.mjs';
 import { parkInsight, mergeIncubatorItems, getConventions, getIncubatorItem, promoteIncubatorItem } from './incubator.mjs';
 import { verifyAndSettleTask } from './settle.mjs';
+import { executePartialVerification } from './gatekeeper.mjs';
 import { getPayload } from './server.mjs';
 import { repairDatabase } from './repair.mjs';
 import { previewTask, previewFeature, approveTaskCommand, approveFeatureCommand } from './policy.mjs';
@@ -46,6 +47,7 @@ const TOOL_ROLES = Object.freeze({
   vibesync_approve_feature_command: 'admin',
   vibesync_get_state: 'admin', vibesync_list_ready_tasks: 'worker', vibesync_get_task_detail: 'worker',
   vibesync_preview_task: 'worker', vibesync_preview_feature: 'worker', vibesync_claim_task: 'worker', vibesync_heartbeat_task: 'worker',
+  vibesync_partial_verify: 'worker',
   vibesync_verify_and_settle: 'worker', vibesync_park_insight: 'worker'
 });
 
@@ -152,6 +154,14 @@ export function createMcpServer(options = {}) {
           lease_token: { type: 'string' },
           worktree_path: { type: 'string', description: 'Optional: path to the task worktree. Server validates it matches the registered path before computing evidence.' }
         }, required: ['task_id', 'actor_name', 'lease_token'] }
+      },
+      {
+        name: 'vibesync_partial_verify',
+        description: description('Run safe declared gates without settling the task.', 'A worker wants early feedback during a long lease.', 'Do not use with legacy or non-idempotent gates, or as final settlement.', 'Consumes governed gate capacity and records partial gate runs; ownership and task status are unchanged.'), annotations: annotations(false, false, true),
+        inputSchema: { type: 'object', properties: {
+          task_id: { type: 'string' }, actor_name: { type: 'string' },
+          indices: { type: 'array', items: { type: 'integer', minimum: 0 }, description: 'Optional declared gate indices; omit to run every safe structured gate.' }
+        }, required: ['task_id', 'actor_name'] }
       },
       {
         name: 'vibesync_verify_and_settle',
@@ -362,6 +372,12 @@ export function createMcpServer(options = {}) {
 
       if (name === 'vibesync_heartbeat_task') {
         const result = heartbeatTaskLease({ taskId: args.task_id, actorName: args.actor_name, leaseToken: args.lease_token, worktreePath: args.worktree_path, repoRoot }, db);
+        if (onUpdate) onUpdate();
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      if (name === 'vibesync_partial_verify') {
+        const result = executePartialVerification({ taskId: args.task_id, actorName: args.actor_name, indices: args.indices ?? null, repoRoot }, db);
         if (onUpdate) onUpdate();
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
