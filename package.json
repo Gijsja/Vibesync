@@ -39,6 +39,14 @@
     "node": ">=24.0.0"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gijsja/Vibesync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Gijsja/Vibesync/issues"
+  },
+  "homepage": "https://github.com/Gijsja/Vibesync#readme",
   "bin": {
     "vibesync": "./scripts/vibesync.mjs",
     "vibesync-init": "./scripts/vibesync-init.mjs",
@@ -49,10 +57,16 @@
     "scripts/vibesync.mjs",
     "scripts/vibesync-init.mjs",
     "scripts/vibesync-repair.mjs",
+    "scripts/check-public.mjs",
+    "scripts/export-public.mjs",
     ".vibesync/dashboard.html",
+    ".mcp.example.json",
     "README.md",
     "HARDENING.md",
     "docs/USAGE.md",
-    "SECURITY.md"
+    "docs/PUBLISHING.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "LICENSE"
   ]
 }

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { checkPublic, publicFiles } from '../scripts/check-public.mjs';
+import { exportPublicSource } from '../scripts/export-public.mjs';
 
 test('public file selection omits local state and rejects private files, credentials and symlinks', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vibesync-public-'));
@@ -23,4 +24,21 @@ test('public file selection omits local state and rejects private files, credent
     fs.symlinkSync(path.join(root, '.agents/private.md'), path.join(root, 'src/link.md'));
     assert.throws(() => checkPublic(root), /refuses symlink/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('public export refuses source-contained targets and produces a clean file-only copy', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vibesync-export-source-'));
+  const destination = root + '-destination';
+  try {
+    fs.mkdirSync(path.join(root, 'src'));
+    fs.writeFileSync(path.join(root, 'src/main.mjs'), 'export const ready = true;');
+    assert.throws(() => exportPublicSource(root, path.join(root, 'public-export')), /outside the source checkout/);
+    const files = exportPublicSource(root, destination);
+    assert.deepEqual(files, [path.join('src', 'main.mjs')]);
+    assert.equal(fs.readFileSync(path.join(destination, 'src/main.mjs'), 'utf8'), 'export const ready = true;');
+    assert.equal(fs.existsSync(path.join(destination, '.git')), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(destination, { recursive: true, force: true });
+  }
 });

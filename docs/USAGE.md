@@ -21,8 +21,10 @@ npm run hud
 
 Open the URL printed in the terminal. The preferred port is 4040; VibeSync selects
 another port if necessary. The active URL is also saved in `.vibesync/hud.url`.
-`npm start` runs the MCP stdio service and dashboard together. Use `npm run hud`
-when you only want the browser interface.
+`npm start` runs the worker MCP stdio service and dashboard together. Use
+`npm run hud` when you only want the browser interface. Run
+`npm start -- --mcp-role admin` only for a separately configured, human-controlled
+administration connection.
 
 ## Use with another project
 
@@ -46,15 +48,21 @@ keep their history. No sample features or tasks are inserted.
 1. **Create a feature.** Give it a title, acceptance criteria, target milestone,
    and holistic gate command. Define what successful delivery means.
 2. **Add scoped tasks.** Restrict each task to path globs such as `src/auth/**`
-   and enter one verification command per line. Shell commands containing commas
-   stay intact.
+   and enter one verification command per line. Commands execute directly without
+   an implicit shell; quoted arguments stay intact, while pipelines, redirects,
+   and other unquoted shell operators are rejected. MCP contracts should prefer
+   executable-and-argument arrays such as `["npm", "test"]`. If a shell is truly
+   required, make it an explicit boundary such as `["bash", "-c", "..."]`.
 3. **Start a task.** Choose an owner. VibeSync creates a task branch and isolated
    worktree under `.vibesync/worktrees/`, with a 45-minute lease. Open the displayed
    directory in your editor or agent. The local `.vibesync_ACTIVE_TASK.md` file
    includes the parent feature acceptance criteria, scope, gates, and lease details.
    This action does not launch an AI agent.
-4. **Implement and verify.** Install project dependencies in the task worktree as
-   needed. Use **Verify & settle** in the dashboard or the MCP `vibesync_verify_and_settle` tool. Both run scope
+4. **Implement and verify.** Administrative MCP task creation may declare ordered
+   `setup` command arrays so dependencies are ready as soon as the worktree is
+   provisioned. Otherwise install dependencies in the task worktree as needed.
+   Use **Verify & settle** in the dashboard or the MCP
+   `vibesync_verify_and_settle` tool. Both run scope
    checks, real subprocess gates, merge conflict simulation, and squash settlement.
    Omit `worktree_path` for tasks started through the dashboard or automatic MCP
    provisioning. The stored workspace is used. Managed verification runs in a
@@ -75,22 +83,40 @@ The activity budget panel estimates local VibeSync activity. It is not a live
 provider billing or account quota integration. Provider configuration lives in
 `.vibesync/usage.json`.
 
-## MCP tools
+## MCP tools and roles
 
 The generated `.mcp.json` uses an absolute runtime path and explicit repository
 argument. Configure your MCP-capable client to use that server definition. MCP
-stdout is reserved for JSON-RPC; runtime diagnostics go to stderr.
+stdout is reserved for JSON-RPC; runtime diagnostics go to stderr. The generated
+binding is a worker connection by default. Worker and administrative tools are
+never exposed together by the CLI, preventing a worker from changing its own
+scope, gates, strike state, or feature contract. Tool failures use structured JSON
+with the current strike count, exact failure, and forbidden follow-up actions.
+
+### Worker surface
 
 | Tool | Purpose |
 | --- | --- |
-| `vibesync_get_state` | Read contracts, tasks, agents, incubator, and audit state |
-| `vibesync_create_feature` | Define a feature contract and holistic gate |
-| `vibesync_create_task` | Register an execution task with allowed paths and gates |
+| `vibesync_list_ready_tasks` | Read a compact list of claimable tasks |
+| `vibesync_get_task_detail` | Read one task and its parent feature contract |
 | `vibesync_claim_task` | Lease a task and provision its worktree when no path is supplied |
-| `vibesync_release_task` | Release an active lease and preserve work |
 | `vibesync_verify_and_settle` | Run the judicial pipeline and settle a passing task |
 | `vibesync_park_insight` | Park an idea on the incubator orphan branch |
+
+### Human administration surface
+
+Start it with `npm start -- --mcp-role admin` and configure it only in a trusted
+human-controlled client. Feature and task IDs are optional; when omitted, the
+server assigns predictable IDs such as `FEAT-01` and `TASK-01.1`.
+
+| Tool | Purpose |
+| --- | --- |
+| `vibesync_get_state` | Read the complete ledger for administration and diagnosis |
+| `vibesync_create_feature` | Define a feature contract and holistic gate |
+| `vibesync_create_task` | Register scope, gates, and optional provisioning commands |
+| `vibesync_release_task` | Release an active lease and preserve work |
 | `vibesync_merge_insights` | Merge related incubator ideas while retaining provenance |
+| `vibesync_promote_insight` | Turn a parked insight into a scoped draft feature |
 | `vibesync_settle_feature` | Verify and settle a completed feature contract |
 | `vibesync_repair_state` | Reconcile state from Git provenance |
 

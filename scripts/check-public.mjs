@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 export const publicRoots = ['src', 'scripts', 'tests', 'docs', '.vibesync/dashboard.html',
   '.gitignore', '.mcp.example.json', 'package.json', 'package-lock.json',
-  'README.md', 'HARDENING.md', 'SECURITY.md', 'CONTRIBUTING.md'];
+  'README.md', 'HARDENING.md', 'SECURITY.md', 'CONTRIBUTING.md', 'LICENSE'];
 const patterns = [
   ['private key', /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/],
   ['GitHub token', /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})\b/],
@@ -16,7 +16,7 @@ const patterns = [
 export function publicFiles(root) {
   const files = [];
   function visit(relative) {
-    if (/(?:^|\/)(?:\.env(?:\..*)?|credentials\.json|service-account.*\.json)$|\.(?:pem|key|p12|pfx)$/i.test(relative)) throw new Error(`Private filename in public source: ${relative}`);
+    if (/(?:^|\/)(?:\.env(?:\..*)?|\.npmrc|\.netrc|\.pypirc|credentials\.json|service-account.*\.json)$|\.(?:pem|key|p12|pfx)$/i.test(relative)) throw new Error(`Private filename in public source: ${relative}`);
     const target = path.join(root, relative);
     if (!fs.existsSync(target)) return;
     const stat = fs.lstatSync(target);
@@ -43,7 +43,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const files = checkPublic(root);
     const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
     const privateFiles = tracked.filter(file => fs.existsSync(path.join(root, file)) &&
-      /^(?:\.agents\/|\.codex\/|\.local-archive\/|scratch\/|output\/|\.mcp\.json$|\.env(?:\.|$)|\.vibesync\/(?!dashboard\.html$))/.test(file));
+      /^(?:\.agents\/|\.codex\/|\.local-archive\/|scratch\/|output\/|\.mcp\.json$|\.env(?:\.|$)|\.vibesync\/(?!dashboard\.html$)|blank\.pdf$|ORIGINAL_REQUEST\.md$)/.test(file));
     if (privateFiles.length) throw new Error(`Private/local files remain tracked:\n${privateFiles.join('\n')}`);
     console.log(`Public file check passed: ${files.length} files; no configured credential patterns found.`);
     console.log('This check does not erase or certify Git history. See docs/PUBLISHING.md.');

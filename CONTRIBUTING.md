@@ -16,3 +16,8 @@ Add regression coverage for fixes that affect state, Git safety or runtime
 behavior. Run `npm test` and `npm run check:public` before sharing changes.
 Do not include your local database, model credentials, raw agent transcripts or
 real project logs. Security reports follow SECURITY.md.
+
+Gate and provisioning commands must use executable-and-argument arrays in new
+interfaces. Preserve support for simple legacy strings without reintroducing an
+implicit shell. Changes to MCP tools must keep purpose/use/non-use/side-effect
+descriptions, standard safety annotations, and worker/admin role separation.

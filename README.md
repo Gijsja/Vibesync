@@ -55,7 +55,7 @@ It creates no sample tasks and does not stage your source files.
 ## Your first workflow
 
 1. **Create a feature:** describe the outcome and its acceptance criteria.
-2. **Add a task:** choose allowed paths and enter one gate command per line.
+2. **Add a task:** choose allowed paths and enter one shell-free gate command per line.
 3. **Start it:** pick an owner and open the displayed worktree in your editor or agent.
 4. **Build and verify:** make your changes, then choose **Verify & settle**.
 5. **Finish the feature:** once every task has settled, run its final feature gate.
@@ -64,13 +64,15 @@ Found something unrelated along the way? Use **Park Idea** and come back to it.
 
 ## Connect a coding agent
 
-`npm start` runs the stdio MCP server and dashboard together. For another project,
+`npm start` runs the worker stdio MCP server and dashboard together. For another project,
 initialization generates a local `.mcp.json` binding with the correct absolute
 paths. Enable that server in your MCP client. A portable template is available in
 [.mcp.example.json](.mcp.example.json).
 
-MCP tools cover state, feature/task creation, leases, verification, incubator
-parking and merging, feature settlement, and repair. See the
+The default worker surface can list and inspect ready tasks, claim work, verify and
+settle it, and park discoveries. Human administration tools are exposed separately
+with `npm start -- --mcp-role admin`; they create contracts, curate insights,
+settle features, and repair state. See the
 [usage guide](docs/USAGE.md) for details.
 
 ## A few useful boundaries
