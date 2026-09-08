@@ -52,6 +52,10 @@ unauthenticated local HTTP API.
 - Public lease run identifiers correlate task events and gate evidence without
   exposing opaque owner tokens. Audit rollups are deterministic, redact sensitive
   text, and reference large artifacts by hash instead of copying their contents.
+- Model adapters are structured CLI launchers with explicit environment allowlists,
+  private redacted context files, bounded output, supervised leases, and no shell.
+  Provider handoff terminates the old process before releasing and reacquiring the
+  task, preventing overlapping ownership.
 - Repair restores durable Git snapshots into a replacement database, preserving
   backups of the original database and its sidecars.
 - Initialization preserves existing MCP bindings, dashboards, and user files.

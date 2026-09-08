@@ -25,6 +25,7 @@ import { getPayload } from './server.mjs';
 import { repairDatabase } from './repair.mjs';
 import { previewTask, previewFeature, approveTaskCommand, approveFeatureCommand } from './policy.mjs';
 import { buildLeaseRollup } from './audit.mjs';
+import { routeTask, getAdapterStatus, cancelAdapterRun, collectAdapterResult, handoffAdapterRun } from './adapters.mjs';
 
 const commandSchema = { oneOf: [
   { type: 'string', description: 'Legacy shell-free command string.' },
@@ -47,6 +48,7 @@ const TOOL_ROLES = Object.freeze({
   vibesync_approve_task_command: 'admin',
   vibesync_approve_feature_command: 'admin',
   vibesync_get_lease_rollup: 'admin',
+  vibesync_route_task: 'admin', vibesync_adapter_status: 'admin',
   vibesync_get_state: 'admin', vibesync_list_ready_tasks: 'worker', vibesync_get_task_detail: 'worker',
   vibesync_preview_task: 'worker', vibesync_preview_feature: 'worker', vibesync_claim_task: 'worker', vibesync_heartbeat_task: 'worker',
   vibesync_partial_verify: 'worker',
@@ -108,6 +110,17 @@ export function createMcpServer(options = {}) {
         name: 'vibesync_get_lease_rollup',
         description: description('Read the deterministic audit rollup for one lease run.', 'An administrator is reviewing commands, files, approvals, failures, or handoffs for a specific lease.', 'Do not use to retrieve raw artifact contents or lease tokens.', 'Read-only; returns redacted metadata and artifact references.'), annotations: annotations(true, false, true),
         inputSchema: { type: 'object', properties: { lease_run_id: { type: 'string' } }, required: ['lease_run_id'] }
+      },
+      {
+        name: 'vibesync_route_task',
+        description: description('Route and launch a ready task through a configured model CLI adapter.', 'An administrator wants VibeSync to supervise Gemini, Claude, Codex, or a local-model process.', 'Do not use to bypass task readiness, approvals, scope, or lease ownership.', 'Claims the task, provisions its worktree, writes a redacted private context file, and launches a structured process without a shell.'), annotations: annotations(false, true, false),
+        inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, adapter_id: { type: 'string', enum: ['gemini', 'claude', 'codex', 'local'] }, actor_name: { type: 'string' } }, required: ['task_id'] }
+      },
+      {
+        name: 'vibesync_adapter_status',
+        description: description('Inspect, cancel, or collect a supervised adapter run.', 'An administrator is supervising a launched model process.', 'Do not use as task settlement or to infer provider billing.', 'Status is read-only; cancel terminates the process; collect returns redacted bounded output and removes its private context file.'), annotations: annotations(false, true, false),
+        inputSchema: { type: 'object', properties: { run_id: { type: 'string' }, action: { type: 'string', enum: ['status', 'cancel', 'collect', 'handoff'], default: 'status' },
+          adapter_id: { type: 'string', enum: ['gemini', 'claude', 'codex', 'local'], description: 'Required for handoff.' } }, required: ['run_id'] }
       },
       {
         name: 'vibesync_list_ready_tasks',
@@ -385,6 +398,22 @@ export function createMcpServer(options = {}) {
 
       if (name === 'vibesync_get_lease_rollup') {
         return { content: [{ type: 'text', text: JSON.stringify(buildLeaseRollup(args.lease_run_id, db), null, 2) }] };
+      }
+
+      if (name === 'vibesync_route_task') {
+        const result = await routeTask({ taskId: args.task_id, adapterId: args.adapter_id || null, actorName: args.actor_name || null }, db, repoRoot);
+        if (onUpdate) onUpdate();
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      if (name === 'vibesync_adapter_status') {
+        const action = args.action || 'status';
+        const result = action === 'cancel' ? cancelAdapterRun(args.run_id)
+          : action === 'collect' ? collectAdapterResult(args.run_id)
+          : action === 'handoff' ? await handoffAdapterRun(args.run_id, args.adapter_id, db, repoRoot)
+          : getAdapterStatus(args.run_id);
+        if (onUpdate && action !== 'status') onUpdate();
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       if (name === 'vibesync_partial_verify') {

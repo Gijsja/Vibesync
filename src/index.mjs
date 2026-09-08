@@ -20,3 +20,4 @@ export * from './mcp.mjs';
 export * from './repair.mjs';
 export * from './audit.mjs';
 export * from './scheduler.mjs';
+export * from './adapters.mjs';

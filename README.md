@@ -121,6 +121,13 @@ administrator MCP tool and HUD to show a deterministic, redacted lease rollup of
 commands, approvals, persistent writes, failures, and handoffs without embedding
 large artifacts or credentials.
 
+Administrators may configure `adapters` for Gemini, Claude, Codex, and local-model
+CLIs. Adapters use an executable plus argv template, pass redacted task context
+through a private file, forward only explicitly named environment variables, and
+never invoke a shell. Routing is deterministic and capability hints never alter
+authorization. VibeSync supervises lease heartbeats; cancellation and handoff stop
+the old process before ownership moves to another provider.
+
 ## A few useful boundaries
 
 VibeSync is a **trusted local development tool**. The default process sandbox is

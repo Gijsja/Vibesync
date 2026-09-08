@@ -48,12 +48,14 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
       assert.ok(toolNames.includes('vibesync_merge_insights'));
       assert.ok(toolNames.includes('vibesync_settle_feature'));
       assert.ok(toolNames.includes('vibesync_repair_state'));
-      assert.equal(toolNames.length, 20);
+      assert.equal(toolNames.length, 22);
       assert.ok(toolNames.includes('vibesync_preview_task'));
       assert.ok(toolNames.includes('vibesync_approve_task_command'));
       assert.ok(toolNames.includes('vibesync_heartbeat_task'));
       assert.ok(toolNames.includes('vibesync_partial_verify'));
       assert.ok(toolNames.includes('vibesync_get_lease_rollup'));
+      assert.ok(toolNames.includes('vibesync_route_task'));
+      assert.ok(toolNames.includes('vibesync_adapter_status'));
       assert.ok(toolNames.includes('vibesync_preview_feature'));
       assert.ok(toolNames.includes('vibesync_approve_feature_command'));
       assert.ok(toolNames.includes('vibesync_create_feature'));

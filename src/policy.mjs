@@ -44,7 +44,8 @@ export function getExecutionPolicy(repoRoot = process.cwd()) {
     network_default: false,
     allow_legacy_commands: true,
     redact_logs: true,
-    resource_policy: DEFAULT_RESOURCE_POLICY
+    resource_policy: DEFAULT_RESOURCE_POLICY,
+    adapters: {}
   };
   const policyPath = path.join(repoRoot, '.vibesync', 'policy.json');
   try {
@@ -56,7 +57,8 @@ export function getExecutionPolicy(repoRoot = process.cwd()) {
     if (resource.max_concurrent_gates > 64 || resource.max_concurrent_gates_per_actor > 64) throw new Error('Gate concurrency limits cannot exceed 64.');
     if (resource.timeout_ceiling_ms > 3600000) throw new Error('Gate timeout ceiling cannot exceed 3600000ms.');
     if (resource.output_limit_bytes > 100 * 1024 * 1024) throw new Error('Gate output limit cannot exceed 104857600 bytes.');
-    const policy = { ...defaults, ...configured, resource_policy: resource };
+    const adapters = configured.adapters && typeof configured.adapters === 'object' && !Array.isArray(configured.adapters) ? configured.adapters : {};
+    const policy = { ...defaults, ...configured, resource_policy: resource, adapters };
     if (!['audit', 'enforce'].includes(policy.approval_mode)) throw new Error('approval_mode must be audit or enforce.');
     if (!['process', 'auto', 'required'].includes(policy.sandbox_mode)) throw new Error('sandbox_mode must be process, auto, or required.');
     return policy;
