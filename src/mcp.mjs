@@ -23,7 +23,7 @@ import { verifyAndSettleTask } from './settle.mjs';
 import { executePartialVerification } from './gatekeeper.mjs';
 import { getPayload } from './server.mjs';
 import { repairDatabase } from './repair.mjs';
-import { previewTask, previewFeature, approveTaskCommand, approveFeatureCommand } from './policy.mjs';
+import { previewTask, previewFeature, approveTaskCommand, approveFeatureCommand, getExecutionPolicy, detectSandboxCapabilities, migratePolicy } from './policy.mjs';
 import { buildLeaseRollup } from './audit.mjs';
 import { routeTask, getAdapterStatus, cancelAdapterRun, collectAdapterResult, handoffAdapterRun } from './adapters.mjs';
 
@@ -49,6 +49,7 @@ const TOOL_ROLES = Object.freeze({
   vibesync_approve_feature_command: 'admin',
   vibesync_get_lease_rollup: 'admin',
   vibesync_route_task: 'admin', vibesync_adapter_status: 'admin',
+  vibesync_policy_status: 'admin', vibesync_migrate_policy: 'admin',
   vibesync_get_state: 'admin', vibesync_list_ready_tasks: 'worker', vibesync_get_task_detail: 'worker',
   vibesync_preview_task: 'worker', vibesync_preview_feature: 'worker', vibesync_claim_task: 'worker', vibesync_heartbeat_task: 'worker',
   vibesync_partial_verify: 'worker',
@@ -115,6 +116,16 @@ export function createMcpServer(options = {}) {
         name: 'vibesync_route_task',
         description: description('Route and launch a ready task through a configured model CLI adapter.', 'An administrator wants VibeSync to supervise Gemini, Claude, Codex, or a local-model process.', 'Do not use to bypass task readiness, approvals, scope, or lease ownership.', 'Claims the task, provisions its worktree, writes a redacted private context file, and launches a structured process without a shell.'), annotations: annotations(false, true, false),
         inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, adapter_id: { type: 'string', enum: ['gemini', 'claude', 'codex', 'local'] }, actor_name: { type: 'string' } }, required: ['task_id'] }
+      },
+      {
+        name: 'vibesync_policy_status',
+        description: description('Inspect policy version, sandbox capability, and a non-mutating migration preview.', 'An administrator is assessing whether a project is fail-closed.', 'Do not treat capability reporting as proof that a command was sandboxed.', 'Read-only; resolves contracts and reports legacy commands and approvals needed.'), annotations: annotations(true, false, true),
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'vibesync_migrate_policy',
+        description: description('Explicitly migrate project execution policy to version 2 fail-closed defaults.', 'An administrator reviewed the migration preview and accepts commands that may need conversion or approval.', 'Do not invoke from a worker or without human confirmation.', 'Atomically writes policy.json; does not rewrite task contracts or grant approvals.'), annotations: annotations(false, true, false),
+        inputSchema: { type: 'object', properties: { apply: { type: 'boolean', default: false }, confirmed_by: { type: 'string' } }, required: ['apply'] }
       },
       {
         name: 'vibesync_adapter_status',
@@ -403,6 +414,16 @@ export function createMcpServer(options = {}) {
       if (name === 'vibesync_route_task') {
         const result = await routeTask({ taskId: args.task_id, adapterId: args.adapter_id || null, actorName: args.actor_name || null }, db, repoRoot);
         if (onUpdate) onUpdate();
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      if (name === 'vibesync_policy_status') {
+        return { content: [{ type: 'text', text: JSON.stringify({ policy: getExecutionPolicy(repoRoot), capabilities: detectSandboxCapabilities(), migration: migratePolicy(repoRoot, db) }, null, 2) }] };
+      }
+
+      if (name === 'vibesync_migrate_policy') {
+        const result = migratePolicy(repoRoot, db, { apply: args.apply === true, confirmedBy: args.confirmed_by || null });
+        if (onUpdate && result.applied) onUpdate();
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 

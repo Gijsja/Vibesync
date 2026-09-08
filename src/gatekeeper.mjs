@@ -115,7 +115,7 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
     let spec;
     let approval;
     try {
-      spec = resolveCommandSpec(gate, { cwd, phase: phase === 'partial' ? 'gate' : phase });
+      spec = resolveCommandSpec(gate, { cwd, phase: phase === 'partial' ? 'gate' : phase, policyVersion: policy.version });
       if (phase === 'partial' && (spec.legacy || spec.idempotency !== 'safe')) {
         throw Object.assign(new Error('Partial verification requires structured commands declared idempotency: safe.'), { code: 'PARTIAL_GATE_UNSAFE' });
       }

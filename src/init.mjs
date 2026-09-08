@@ -49,6 +49,14 @@ export function initializeWorkspace(repoRoot = process.cwd()) {
   if (missing.length) fs.writeFileSync(ignorePath, `${existingIgnore}${existingIgnore.endsWith('\n') || !existingIgnore ? '' : '\n'}\n# VibeSync local runtime\n${missing.join('\n')}\n`);
   const db = getDb(null, repoRoot);
   closeDb(db);
+  const policyPath = path.join(repoRoot, '.vibesync', 'policy.json');
+  if (!fs.existsSync(policyPath)) fs.writeFileSync(policyPath, JSON.stringify({
+    version: 2,
+    approval_mode: 'enforce',
+    sandbox_mode: 'required',
+    network_default: false,
+    allow_legacy_commands: false
+  }, null, 2) + '\n');
   const dashboardPath = path.join(repoRoot, '.vibesync', 'dashboard.html');
   if (!fs.existsSync(dashboardPath)) fs.copyFileSync(bundledDashboardPath, dashboardPath);
   config.mcpServers ||= {};
@@ -57,5 +65,5 @@ export function initializeWorkspace(repoRoot = process.cwd()) {
   const temporary = `${configPath}.${process.pid}.tmp`;
   fs.writeFileSync(temporary, JSON.stringify(config, null, 2) + '\n');
   fs.renameSync(temporary, configPath);
-  return { repoRoot, dashboardPath, configPath, createdAnchor: !hasCommits };
+  return { repoRoot, dashboardPath, configPath, policyPath, createdAnchor: !hasCommits };
 }

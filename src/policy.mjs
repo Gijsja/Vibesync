@@ -27,6 +27,9 @@ export const DEFAULT_RESOURCE_POLICY = Object.freeze({
   retry_after_ms: 1000
 });
 
+const POLICY_V1_DEFAULTS = Object.freeze({ approval_mode: 'audit', sandbox_mode: 'process', network_default: false, allow_legacy_commands: true });
+const POLICY_V2_DEFAULTS = Object.freeze({ approval_mode: 'enforce', sandbox_mode: 'required', network_default: false, allow_legacy_commands: false });
+
 export function identifyModelProfile(actorName = '') {
   const actor = String(actorName).toLowerCase();
   if (/gemini|antigravity/.test(actor)) return MODEL_PROFILES.gemini;
@@ -37,12 +40,7 @@ export function identifyModelProfile(actorName = '') {
 }
 
 export function getExecutionPolicy(repoRoot = process.cwd()) {
-  const defaults = {
-    version: 1,
-    approval_mode: 'audit',
-    sandbox_mode: 'process',
-    network_default: false,
-    allow_legacy_commands: true,
+  const common = {
     redact_logs: true,
     resource_policy: DEFAULT_RESOURCE_POLICY,
     adapters: {}
@@ -50,6 +48,9 @@ export function getExecutionPolicy(repoRoot = process.cwd()) {
   const policyPath = path.join(repoRoot, '.vibesync', 'policy.json');
   try {
     const configured = JSON.parse(fs.readFileSync(policyPath, 'utf8'));
+    const version = Number.isInteger(configured.version) ? configured.version : 1;
+    if (version < 1 || version > 2) throw new Error(`Unsupported policy version: ${version}.`);
+    const defaults = { version, ...(version >= 2 ? POLICY_V2_DEFAULTS : POLICY_V1_DEFAULTS), ...common };
     const resource = { ...DEFAULT_RESOURCE_POLICY, ...(configured.resource_policy || {}) };
     for (const [key, value] of Object.entries(resource)) {
       if (!Number.isInteger(value) || value < 1) throw new Error(`resource_policy.${key} must be a positive integer.`);
@@ -62,9 +63,66 @@ export function getExecutionPolicy(repoRoot = process.cwd()) {
     if (!['audit', 'enforce'].includes(policy.approval_mode)) throw new Error('approval_mode must be audit or enforce.');
     if (!['process', 'auto', 'required'].includes(policy.sandbox_mode)) throw new Error('sandbox_mode must be process, auto, or required.');
     return policy;
-  } catch {
-    return defaults;
+  } catch (error) {
+    if (error.code === 'ENOENT') return { version: 1, ...POLICY_V1_DEFAULTS, ...common };
+    throw Object.assign(new Error(`Invalid VibeSync execution policy: ${error.message}`), { code: 'POLICY_INVALID' });
   }
+}
+
+export function detectSandboxCapabilities() {
+  const linux = process.platform === 'linux';
+  const bubblewrap = linux && hasBubblewrap();
+  return { platform: process.platform, bubblewrap, requiredSandboxSupported: bubblewrap,
+    modes: { process: true, auto: true, required: bubblewrap },
+    warning: bubblewrap ? null : 'Bubblewrap isolation is unavailable; required mode will fail closed.' };
+}
+
+function contractCommands(db) {
+  if (!db) return [];
+  const commands = [];
+  const parse = value => { if (typeof value !== 'string') return value; try { return JSON.parse(value); } catch { return value; } };
+  for (const task of db.prepare('SELECT id, required_gates, setup, worktree_path FROM tasks ORDER BY id').all()) {
+    for (const [phase, raw] of [['setup', task.setup], ['gate', task.required_gates]]) {
+      const list = parse(raw);
+      for (const [index, command] of (Array.isArray(list) ? list : [list]).entries()) commands.push({ target_type: 'task', target_id: task.id, phase, index, command, cwd: task.worktree_path });
+    }
+  }
+  for (const feature of db.prepare('SELECT id, holistic_gate_cmd FROM features WHERE holistic_gate_cmd IS NOT NULL ORDER BY id').all()) {
+    commands.push({ target_type: 'feature', target_id: feature.id, phase: 'feature', index: 0, command: parse(feature.holistic_gate_cmd), cwd: null });
+  }
+  return commands.filter(item => item.command !== null && item.command !== undefined && item.command !== '');
+}
+
+export function previewPolicyMigration(repoRoot = process.cwd(), db = null) {
+  const current = getExecutionPolicy(repoRoot);
+  const commands = contractCommands(db).map(item => {
+    let spec = null;
+    let error = null;
+    try { spec = resolveCommandSpec(item.command, { cwd: item.cwd || repoRoot, phase: item.phase, policyVersion: 2 }); } catch (err) { error = err.message; }
+    const legacy = !item.command || typeof item.command !== 'object' || Array.isArray(item.command);
+    let replacement = null;
+    if (legacy && spec?.argv) replacement = { type: 'argv', argv: spec.argv, idempotency: 'safe', network: false, write_paths: [] };
+    const approved = spec ? Boolean(db?.prepare('SELECT 1 FROM gate_approvals WHERE policy_hash = ? AND revoked_at IS NULL').get(spec.policyHash)) : false;
+    return { target_type: item.target_type, target_id: item.target_id, phase: item.phase, index: item.index,
+      legacy, error, policy_hash: spec?.policyHash || null, approved, replacement };
+  });
+  commands.sort((a, b) => `${a.target_type}:${a.target_id}:${a.phase}:${a.index}`.localeCompare(`${b.target_type}:${b.target_id}:${b.phase}:${b.index}`));
+  return { current_version: current.version, target_version: 2, already_current: current.version >= 2,
+    capabilities: detectSandboxCapabilities(), legacy_commands: commands.filter(item => item.legacy),
+    approvals_needed: commands.filter(item => !item.legacy && !item.approved).map(item => ({ target_type: item.target_type, target_id: item.target_id, phase: item.phase, index: item.index, policy_hash: item.policy_hash })),
+    proposed_policy: { ...current, version: 2, ...POLICY_V2_DEFAULTS } };
+}
+
+export function migratePolicy(repoRoot = process.cwd(), db = null, { apply = false, confirmedBy = null } = {}) {
+  const preview = previewPolicyMigration(repoRoot, db);
+  if (!apply) return { applied: false, preview };
+  if (!confirmedBy) throw new Error('confirmedBy is required to apply a policy migration.');
+  const policyPath = path.join(repoRoot, '.vibesync', 'policy.json');
+  fs.mkdirSync(path.dirname(policyPath), { recursive: true });
+  const temporary = `${policyPath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(preview.proposed_policy, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(temporary, policyPath);
+  return { applied: true, confirmed_by: confirmedBy, policy_path: policyPath, preview: previewPolicyMigration(repoRoot, db) };
 }
 
 function stringList(value, name) {
@@ -75,7 +133,7 @@ function stringList(value, name) {
   return [...value];
 }
 
-export function resolveCommandSpec(command, { cwd = process.cwd(), phase = 'gate' } = {}) {
+export function resolveCommandSpec(command, { cwd = process.cwd(), phase = 'gate', policyVersion = 1 } = {}) {
   let type = 'legacy';
   let argv;
   let args = [];
@@ -129,7 +187,7 @@ export function resolveCommandSpec(command, { cwd = process.cwd(), phase = 'gate
     try { fs.accessSync(candidate, fs.constants.X_OK); resolvedExecutable = fs.realpathSync(candidate); break; } catch {}
   }
   const canonical = {
-    policy_version: 1,
+    policy_version: policyVersion,
     phase,
     type,
     argv,
@@ -202,7 +260,7 @@ export function prepareSandboxedCommand(spec, cwd, repoRoot = process.cwd(), all
     return { argv: spec.argv, sandbox: 'process', warning: 'Bubblewrap unavailable; using hardened process mode.' };
   }
   const writeRoots = bubblewrapWriteRoots(cwd, spec.write_paths?.length ? spec.write_paths : allowedWritePaths);
-  const argv = ['bwrap', '--die-with-parent', '--new-session', '--ro-bind', '/', '/', '--ro-bind', cwd, cwd];
+  const argv = ['bwrap', '--die-with-parent', '--new-session', '--ro-bind', '/', '/', '--dev', '/dev', '--ro-bind', cwd, cwd];
   for (const writeRoot of writeRoots) argv.push('--bind', writeRoot, writeRoot);
   argv.push('--chdir', cwd);
   const resolvedCwd = path.resolve(cwd);
@@ -243,7 +301,7 @@ export function approveTaskCommand({ taskId, phase = 'gate', index = 0, approved
   const command = commandsForTask(task, feature, phase)[index];
   if (command === undefined) throw new Error(`No ${phase} command exists at index ${index}.`);
   const cwd = task.worktree_path || repoRoot;
-  const spec = resolveCommandSpec(command, { cwd, phase });
+  const spec = resolveCommandSpec(command, { cwd, phase, policyVersion: getExecutionPolicy(repoRoot).version });
   db.prepare(`INSERT INTO gate_approvals (policy_hash, task_id, phase, command_json, approved_by, approved_at, revoked_at)
     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, NULL)
     ON CONFLICT(policy_hash) DO UPDATE SET approved_by = excluded.approved_by, approved_at = CURRENT_TIMESTAMP, revoked_at = NULL`)
@@ -258,7 +316,7 @@ export function approveFeatureCommand({ featureId, approvedBy }, db, repoRoot = 
   if (!feature) throw new Error(`Feature ${featureId} not found.`);
   const command = parseJson(feature.holistic_gate_cmd, feature.holistic_gate_cmd);
   if (!command) throw new Error(`Feature ${featureId} has no holistic gate.`);
-  const spec = resolveCommandSpec(command, { cwd: repoRoot, phase: 'feature' });
+  const spec = resolveCommandSpec(command, { cwd: repoRoot, phase: 'feature', policyVersion: getExecutionPolicy(repoRoot).version });
   db.prepare(`INSERT INTO gate_approvals (policy_hash, feature_id, phase, command_json, approved_by, approved_at, revoked_at)
     VALUES (?, ?, 'feature', ?, ?, CURRENT_TIMESTAMP, NULL)
     ON CONFLICT(policy_hash) DO UPDATE SET approved_by = excluded.approved_by, approved_at = CURRENT_TIMESTAMP, revoked_at = NULL`)
@@ -272,7 +330,7 @@ export function previewFeature({ featureId, actorName = 'unknown' }, db, repoRoo
   if (!feature) throw new Error(`Feature ${featureId} not found.`);
   const command = parseJson(feature.holistic_gate_cmd, feature.holistic_gate_cmd);
   if (!command) return { feature: { id: feature.id, title: feature.title }, model: identifyModelProfile(actorName), commands: [], approval_required: 0, policy: getExecutionPolicy(repoRoot) };
-  const spec = resolveCommandSpec(command, { cwd: repoRoot, phase: 'feature' });
+  const spec = resolveCommandSpec(command, { cwd: repoRoot, phase: 'feature', policyVersion: getExecutionPolicy(repoRoot).version });
   const approval = commandApproval(spec, db, repoRoot);
   return { feature: { id: feature.id, title: feature.title }, model: identifyModelProfile(actorName), commands: [{ phase: 'feature', index: 0, ...spec, approval }], approval_required: approval.runnable ? 0 : 1, policy: getExecutionPolicy(repoRoot) };
 }
@@ -285,7 +343,7 @@ export function previewTask({ taskId, actorName = 'unknown' }, db, repoRoot = pr
   const phases = ['setup', 'gate'];
   if (feature?.holistic_gate_cmd) phases.push('feature');
   const commands = phases.flatMap(phase => commandsForTask(task, feature, phase).map((command, index) => {
-    const spec = resolveCommandSpec(command, { cwd, phase });
+    const spec = resolveCommandSpec(command, { cwd, phase, policyVersion: getExecutionPolicy(repoRoot).version });
     const approval = commandApproval(spec, db, repoRoot);
     const history = db.prepare('SELECT AVG(duration_ms) AS average_ms, COUNT(*) AS runs FROM gate_runs WHERE policy_hash = ?').get(spec.policyHash);
     return { phase, index, ...spec, approval, estimated_ms: Math.round(history?.average_ms || 0), prior_runs: history?.runs || 0 };

@@ -81,11 +81,14 @@ test('operation notification failures cannot strand a running job or escape comp
 
 test('first settlement preserves uncommitted setup files while runtime ignores remain active', async () => {
   const { initializeWorkspace } = await import('../src/init.mjs');
+  const { approveTaskCommand } = await import('../src/policy.mjs');
   await withSandbox(async sandbox => {
     initializeWorkspace(sandbox.dir);
     const db = getDb(null, sandbox.dir);
     createFeature({ id: 'FEAT-FIRST', title: 'First run', target_milestone: 'v1', spec_markdown: 'Deliver source' }, db);
-    createTask({ id: 'TASK-FIRST', feature_id: 'FEAT-FIRST', title: 'Source', allowed_paths: ['src/**'], required_gates: ['git diff --check'] }, db);
+    createTask({ id: 'TASK-FIRST', feature_id: 'FEAT-FIRST', title: 'Source', allowed_paths: ['src/**'],
+      required_gates: [{ type: 'argv', argv: ['git', 'diff', '--check'] }] }, db);
+    approveTaskCommand({ taskId: 'TASK-FIRST', phase: 'gate', index: 0, approvedBy: 'test-admin' }, db, sandbox.dir);
     const setup = ['.gitignore', '.mcp.json', '.vibesync/dashboard.html'].map(file => [file, fs.readFileSync(path.join(sandbox.dir, file), 'utf8')]);
     const { worktreePath } = startTask({ taskId: 'TASK-FIRST', actorName: 'human' }, db, sandbox.dir);
     fs.mkdirSync(path.join(worktreePath, 'src'), { recursive: true });

@@ -261,7 +261,7 @@ export function settleFeature(params, db = getDb(), repoRoot = process.cwd()) {
 
   // 2. Holistic Gate Command Execution
   if (feature.holistic_gate_cmd && (typeof feature.holistic_gate_cmd !== 'string' || feature.holistic_gate_cmd.trim() !== '')) {
-    const spec = resolveCommandSpec(feature.holistic_gate_cmd, { cwd: repoRoot, phase: 'feature' });
+    const spec = resolveCommandSpec(feature.holistic_gate_cmd, { cwd: repoRoot, phase: 'feature', policyVersion: getExecutionPolicy(repoRoot).version });
     const approval = requireCommandApproval(spec, db, repoRoot);
     const policy = getExecutionPolicy(repoRoot);
     const slot = acquireGateSlot(db, actorName, null, 'feature', policy.resource_policy);

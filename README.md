@@ -128,6 +128,12 @@ never invoke a shell. Routing is deterministic and capability hints never alter
 authorization. VibeSync supervises lease heartbeats; cancellation and handoff stop
 the old process before ownership moves to another provider.
 
+Newly initialized workspaces use policy version 2: approvals are enforced,
+Bubblewrap isolation is required, network is denied by default, and legacy command
+forms are disabled. Existing or versionless projects retain version-1 compatibility
+until an administrator reviews `vibesync_policy_status` and explicitly applies
+`vibesync_migrate_policy`; migration never rewrites contracts or grants approvals.
+
 ## A few useful boundaries
 
 VibeSync is a **trusted local development tool**. The default process sandbox is

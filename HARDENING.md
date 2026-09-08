@@ -62,11 +62,13 @@ unauthenticated local HTTP API.
 
 ## Command-policy rollout
 
-The compatibility default is `approval_mode: audit` with `sandbox_mode: process`.
-This records unapproved commands while existing projects migrate. Set approval
-mode to `enforce` to fail closed. Set sandbox mode to `required` to fail closed
-unless Bubblewrap filesystem/network containment is usable. Structured command
-profiles reduce ambiguity but do not make test code intrinsically trustworthy.
+Versionless and version-1 projects retain the compatibility default of
+`approval_mode: audit` with `sandbox_mode: process`. Newly initialized or explicitly
+migrated version-2 projects enforce approvals, require Bubblewrap, deny network by
+default, and reject legacy commands. Migration previews enumerate legacy contracts
+and missing approvals without mutation. Invalid policy files fail closed instead
+of silently reverting to compatibility behavior. Structured command profiles reduce
+ambiguity but do not make test code intrinsically trustworthy.
 
 ## Verification
 
