@@ -1,9 +1,14 @@
 /**
  * src/usage.mjs
- * 
+ *
  * AI Provider Quota & Rolling 5-Hour Usage Engine
  * Computes 5-hour rolling usage %, total usage per provider, active leases,
  * and maintains optional user-configured overrides in .vibesync/usage.json.
+ *
+ * Also exports task-level efficiency metrics derived from settlement_events
+ * and gate_runs using lease-run correlation (computeTaskEfficiency,
+ * computeFeatureEfficiency). Provider token/cost fields are nullable and only
+ * populated from real provider evidence — never synthesised from activity counts.
  */
 
 import fs from 'node:fs';
@@ -210,4 +215,127 @@ export function computeProviderUsage(db = getDb(), repoRoot = process.cwd()) {
       resetsIn: 'Rolling continuously'
     };
   });
+}
+
+/**
+ * Computes task-level efficiency metrics for a single task by correlating
+ * settlement_events and gate_runs via lease_run_id.
+ *
+ * Derived values (time_to_settle_ms, verification_attempts, etc.) are present
+ * when the underlying events exist. Missing data is null — never zero or fabricated.
+ * Provider token/cost fields (tokens_used, cost_usd) are always null unless
+ * populated from real provider API evidence in the evidence_payload.
+ *
+ * @param {string} taskId
+ * @param {DatabaseSync} [db=getDb()]
+ * @returns {object} Efficiency record for the task.
+ */
+export function computeTaskEfficiency(taskId, db = getDb()) {
+  if (!taskId || typeof taskId !== 'string') throw new Error('taskId is required');
+
+  const task = db.prepare(
+    'SELECT id, feature_id, title, status, assigned_actor, created_at, updated_at, lease_run_id, model_hint FROM tasks WHERE id = ?'
+  ).get(taskId);
+  if (!task) throw new Error(`Task ${taskId} not found`);
+
+  // --- Claim and settle timestamps from settlement_events ---
+  const claimEvent = db.prepare(
+    "SELECT timestamp, actor, lease_run_id FROM settlement_events WHERE task_id = ? AND action = 'task_claimed' ORDER BY id ASC LIMIT 1"
+  ).get(taskId);
+
+  const settleEvent = db.prepare(
+    "SELECT timestamp, actor, lease_run_id FROM settlement_events WHERE task_id = ? AND action = 'task_settled' ORDER BY id DESC LIMIT 1"
+  ).get(taskId);
+
+  const firstClaimedAt = claimEvent?.timestamp ?? null;
+  const settledAt = settleEvent?.timestamp ?? null;
+
+  let timeToSettleMs = null;
+  if (firstClaimedAt && settledAt) {
+    const claimMs = new Date(firstClaimedAt).getTime();
+    const settleMs = new Date(settledAt).getTime();
+    if (!Number.isNaN(claimMs) && !Number.isNaN(settleMs) && settleMs >= claimMs) {
+      timeToSettleMs = settleMs - claimMs;
+    }
+  }
+
+  // --- Lease-run handoffs: distinct lease_run_ids from settlement_events ---
+  const leaseRunRows = db.prepare(
+    "SELECT DISTINCT lease_run_id FROM settlement_events WHERE task_id = ? AND lease_run_id IS NOT NULL ORDER BY id ASC"
+  ).all(taskId);
+  const leaseRunIds = leaseRunRows.map(r => r.lease_run_id);
+  const handoffCount = leaseRunIds.length > 1 ? leaseRunIds.length - 1 : 0;
+
+  // --- Gate runs: verification attempts and failures ---
+  const gateRuns = db.prepare(
+    "SELECT status, phase, gate_index, duration_ms, exit_code, evidence_payload FROM gate_runs WHERE task_id = ? AND phase IN ('gate', 'partial') ORDER BY started_at ASC"
+  ).all(taskId);
+
+  const verificationAttempts = gateRuns.filter(r => r.phase === 'gate').length;
+  const failedGates = gateRuns.filter(r => r.phase === 'gate' && r.status === 'failed').length;
+  const passedGates = gateRuns.filter(r => r.phase === 'gate' && r.status === 'passed').length;
+  const partialVerifications = gateRuns.filter(r => r.phase === 'partial').length;
+
+  const totalGateDurationMs = gateRuns.reduce((sum, r) => sum + (r.duration_ms || 0), 0);
+
+  // --- Explicit handoff events recorded ---
+  const handoffEvents = db.prepare(
+    "SELECT COUNT(*) AS count FROM settlement_events WHERE task_id = ? AND action IN ('lease_handoff_requested', 'ejected_to_human')"
+  ).get(taskId)?.count ?? 0;
+
+  // --- Provider tokens/cost: only from real provider evidence, always null otherwise ---
+  let tokensUsed = null;
+  let costUsd = null;
+  for (const run of gateRuns) {
+    try {
+      const ev = run.evidence_payload ? JSON.parse(run.evidence_payload) : null;
+      if (ev?.tokens_used !== undefined && ev.tokens_used !== null) {
+        tokensUsed = (tokensUsed ?? 0) + Number(ev.tokens_used);
+      }
+      if (ev?.cost_usd !== undefined && ev.cost_usd !== null) {
+        costUsd = (costUsd ?? 0) + Number(ev.cost_usd);
+      }
+    } catch { /* malformed payload — skip */ }
+  }
+
+  return {
+    task_id: task.id,
+    feature_id: task.feature_id,
+    title: task.title,
+    status: task.status,
+    actor: task.assigned_actor ?? null,
+    model_hint: task.model_hint ?? null,
+    // Timing — null when not yet claimed or not yet settled
+    first_claimed_at: firstClaimedAt,
+    settled_at: settledAt,
+    time_to_settle_ms: timeToSettleMs,
+    // Gate evidence
+    verification_attempts: verificationAttempts,
+    failed_gates: failedGates,
+    passed_gates: passedGates,
+    partial_verifications: partialVerifications,
+    total_gate_duration_ms: totalGateDurationMs || null,
+    // Lease runs / handoffs
+    lease_run_ids: leaseRunIds,
+    handoff_count: handoffCount,
+    explicit_handoff_events: handoffEvents,
+    // Provider billing — only from real provider evidence
+    tokens_used: tokensUsed,
+    cost_usd: costUsd
+  };
+}
+
+/**
+ * Computes efficiency metrics for every task in a feature, in order.
+ *
+ * @param {string} featureId
+ * @param {DatabaseSync} [db=getDb()]
+ * @returns {Array<object>}
+ */
+export function computeFeatureEfficiency(featureId, db = getDb()) {
+  if (!featureId || typeof featureId !== 'string') throw new Error('featureId is required');
+  const tasks = db.prepare(
+    "SELECT id FROM tasks WHERE feature_id = ? ORDER BY created_at ASC, id ASC"
+  ).all(featureId);
+  return tasks.map(t => computeTaskEfficiency(t.id, db));
 }
