@@ -26,9 +26,39 @@ import { createFeature } from '../src/features.mjs';
 import { createTask } from '../src/tasks.mjs';
 import { startServer } from '../src/server.mjs';
 import { createMcpServer } from '../src/mcp.mjs';
+import { buildWorkflowDefinition, effectiveWorkflowStatus } from '../src/workflow.mjs';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
+
+  await t.test('workflow definition groups real feature membership and exposes live status', () => {
+    const state = {
+      features: [
+        { id: 'FEAT-20', title: 'Later feature' },
+        { id: 'FEAT-10', title: 'First feature' }
+      ],
+      tasks: [
+        { id: 'TASK-20.2', feature_id: 'FEAT-20', title: 'Blocked work', status: 'blocked', consecutive_failures: 3 },
+        { id: 'TASK-10.2', feature_id: 'FEAT-10', title: 'Review work', status: 'review' },
+        { id: 'TASK-10.1', feature_id: 'FEAT-10', title: 'Active work', status: 'in_progress', assigned_actor: 'openai-codex' },
+        { id: 'TASK-10.3', feature_id: 'FEAT-10', title: 'Queued work', status: 'backlog' },
+        { id: 'TASK-10.4', feature_id: 'FEAT-10', title: 'Finished work', status: 'settled' },
+        { id: 'TASK-20.1', feature_id: 'FEAT-20', title: 'Ready work', status: 'ready' },
+        { id: 'TASK-20.3', feature_id: 'FEAT-20', title: 'Still working', status: 'in_progress' }
+      ],
+      operations: [{ kind: 'task', target_id: 'TASK-10.1', status: 'running' }]
+    };
+    const workflow = buildWorkflowDefinition(state, 'dark');
+    assert.equal(workflow.empty, false);
+    assert.equal(workflow.taskNodes.find(node => node.taskId === 'TASK-10.1').status, 'verifying');
+    assert.equal(effectiveWorkflowStatus({ id: 'TASK-10.1', status: 'in_progress' }, state.operations), 'verifying');
+    assert.match(workflow.source, /subgraph GROUP0\["FEAT-10: First feature"\]/);
+    assert.ok(workflow.source.indexOf('TASK-10.1') < workflow.source.indexOf('TASK-10.2'), 'Tasks are sorted within their feature');
+    assert.match(workflow.source, /F0 --> T0/);
+    assert.doesNotMatch(workflow.source, /T0 --> T1/, 'Sibling task dependencies must not be invented');
+    for (const status of ['backlog', 'ready', 'in_progress', 'verifying', 'review', 'settled', 'blocked']) assert.match(workflow.source, new RegExp(`class T\\d+ ${status};`));
+    assert.deepEqual(buildWorkflowDefinition({}, 'light'), { source: '', taskNodes: [], empty: true });
+  });
 
   await t.test('1. MCP Tool Declarations: registers hardened worker and admin tools', async () => {
     await withSandbox(async (sandbox) => {
@@ -314,6 +344,14 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
         const indexRes = await client.getHudHtml();
         assert.equal(indexRes.status, 200);
         assert.ok(indexRes.html.includes('Test HUD'));
+
+        const mermaidAsset = await fetch(`http://127.0.0.1:${serverInstance.port}/assets/mermaid/mermaid.esm.min.mjs`);
+        assert.equal(mermaidAsset.status, 200);
+        assert.match(mermaidAsset.headers.get('content-type'), /text\/javascript/);
+        assert.ok((await mermaidAsset.text()).length > 10_000);
+        assert.equal((await fetch(`http://127.0.0.1:${serverInstance.port}/assets/mermaid/%2e%2e/server.mjs`)).status, 404);
+        assert.equal((await fetch(`http://127.0.0.1:${serverInstance.port}/assets/mermaid/mermaid.min.js`)).status, 404);
+        assert.equal((await fetch(`http://127.0.0.1:${serverInstance.port}/assets/vibesync-workflow.mjs`)).status, 200);
 
         // 4b. Verify GET /api/state
         const stateRes = await client.getState();

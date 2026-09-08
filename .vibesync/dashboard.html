@@ -656,6 +656,20 @@
       opacity: 0.85;
     }
 
+    .workflow-section { margin-bottom: 1.15rem; }
+    .workflow-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--card-shadow); overflow: hidden; }
+    .workflow-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    .workflow-title { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: .3px; }
+    .workflow-live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    .workflow-body { background: var(--panel-hover); padding: 12px; min-height: 96px; overflow: auto; }
+    .workflow-body svg { display: block; min-width: 100%; height: auto; }
+    .workflow-body .node { cursor: pointer; }
+    .workflow-body .node:focus-visible rect, .workflow-body .node:focus-visible polygon { stroke: var(--accent); stroke-width: 4px; }
+    .workflow-legend { display: flex; gap: 9px; flex-wrap: wrap; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 10px; color: var(--text-muted); }
+    .workflow-legend span::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; background: currentColor; }
+    .workflow-empty, .workflow-error { color: var(--text-muted); font-size: 12px; padding: 18px; text-align: center; }
+    .workflow-error { color: var(--red); }
+
     /* Smart Dual-Mode Scratchpad */
     .scratchpad-section {
       transition: all 0.2s ease;
@@ -1917,6 +1931,7 @@
           <input type="text" class="search-input" id="search-filter" placeholder="🔍 Search features, tasks, gates... (/ to focus)" oninput="handleSearch(this.value)" />
           <button class="visor-toggle-btn active" id="visor-scratch-toggle" onclick="toggleVisor('scratch')">💡 Scratchpad ▾</button>
           <button class="visor-toggle-btn active" id="visor-rig-toggle" onclick="toggleVisor('rig')">🎮 Rig ▾</button>
+          <button class="visor-toggle-btn active" id="visor-workflow-toggle" onclick="toggleVisor('workflow')">🗺️ Workflow ▾</button>
           <button class="visor-toggle-btn" id="density-toggle" onclick="toggleDensity()">📐 Density: Normal</button>
         </div>
       </div>
@@ -1951,6 +1966,17 @@
                 <span>💡 Click any agent or server rig to interact</span>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section class="workflow-section" id="workflow-section">
+          <div class="workflow-card">
+            <div class="workflow-header">
+              <div class="workflow-title"><span class="workflow-live-dot"></span><span>Live Workflow</span></div>
+              <button class="room-toggle-btn" id="workflow-collapse-btn" onclick="toggleWorkflowPanel()">➖ Minimize</button>
+            </div>
+            <div class="workflow-body" id="workflow-body" aria-live="polite"><div class="workflow-empty">Loading live workflow…</div></div>
+            <div class="workflow-legend" id="workflow-legend"><span>Feature</span><span>Ready</span><span>In progress</span><span>Verifying</span><span>Review</span><span>Settled</span><span>Blocked</span></div>
           </div>
         </section>
 
@@ -2348,6 +2374,7 @@
       if (window.agentRoomEngine && typeof window.agentRoomEngine.setTheme === 'function') {
         window.agentRoomEngine.setTheme(theme);
       }
+      renderWorkflow();
     }
 
     function toggleTheme() {
@@ -2444,7 +2471,23 @@
             if (titleInput) titleInput.focus();
           }
         }
+      } else if (which === 'workflow') {
+        toggleWorkflowPanel();
       }
+    }
+
+    function toggleWorkflowPanel() {
+      const body = document.getElementById('workflow-body');
+      const legend = document.getElementById('workflow-legend');
+      const button = document.getElementById('workflow-collapse-btn');
+      const visorButton = document.getElementById('visor-workflow-toggle');
+      if (!body) return;
+      const collapsed = body.style.display === 'none';
+      body.style.display = collapsed ? 'block' : 'none';
+      if (legend) legend.style.display = collapsed ? 'flex' : 'none';
+      if (button) button.textContent = collapsed ? '➖ Minimize' : '➕ Expand';
+      if (visorButton) visorButton.classList.toggle('active', collapsed);
+      if (collapsed) renderWorkflow();
     }
 
     function setFilter(filter, el) {
@@ -2497,10 +2540,61 @@
       renderCurrent();
     }
 
+    let workflowRenderSequence = 0;
+    function workflowTaskSelected(taskId) {
+      const task = currentState?.tasks?.find(item => item.id === taskId);
+      if (!task) return;
+      activeFilter = 'all';
+      searchQuery = task.id.toLowerCase();
+      const search = document.getElementById('search-filter');
+      if (search) search.value = task.id;
+      document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.toggle('active', btn.textContent.trim() === 'All Tasks'));
+      renderCurrent();
+      requestAnimationFrame(() => document.querySelector(`[data-task-id="${CSS.escape(task.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+    }
+    window.workflowTaskSelected = workflowTaskSelected;
+    if (typeof window.addEventListener === 'function') window.addEventListener('vibesync-mermaid-ready', () => renderWorkflow());
+
+    async function renderWorkflow() {
+      const body = document.getElementById('workflow-body');
+      if (!body || body.style.display === 'none' || !currentState) return;
+      const workflow = window.VibeSyncWorkflow;
+      if (!workflow || !window.__vibesyncMermaidReady) return;
+      const definition = workflow.buildWorkflowDefinition(currentState, currentTheme);
+      if (definition.empty) {
+        body.innerHTML = '<div class="workflow-empty">No feature contracts yet. Create a feature to see its live workflow.</div>';
+        return;
+      }
+      const sequence = ++workflowRenderSequence;
+      try {
+        const mermaid = await window.__vibesyncMermaidReady;
+        const { svg } = await mermaid.render(`vibesync-workflow-${sequence}`, definition.source);
+        if (sequence !== workflowRenderSequence) return;
+        body.innerHTML = svg;
+        for (const taskNode of definition.taskNodes) {
+          const node = [...body.querySelectorAll('g.node')].find(candidate => candidate.textContent.includes(taskNode.taskId));
+          if (!node) continue;
+          node.setAttribute('tabindex', '0');
+          node.setAttribute('role', 'button');
+          node.setAttribute('aria-label', `Open ${taskNode.taskId}`);
+          node.append(document.createElementNS('http://www.w3.org/2000/svg', 'title')).textContent = taskNode.tooltip;
+          node.addEventListener('click', () => workflowTaskSelected(taskNode.taskId));
+          node.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); node.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+          });
+        }
+      } catch (error) {
+        if (sequence !== workflowRenderSequence) return;
+        console.error('[VibeSync workflow] Mermaid render failed', error);
+        body.innerHTML = '<div class="workflow-error">Live workflow could not be rendered. Feature and task cards remain available below.</div>';
+      }
+    }
+
     function renderCurrent() {
       if (!currentState) return;
       const data = currentState;
       const operations = data.operations || [];
+      renderWorkflow();
       const running = operations.find(op => op.status === 'running');
       const operationEl = document.getElementById('operation-status');
       if (operationEl) {
@@ -2668,7 +2762,7 @@
                   const trippedText = fails >= 3 ? '⚡ TRIPPED' : (fails > 0 ? `${fails}/3 Strikes` : 'Safe');
 
                   return `
-                    <div class="task-row status-${t.status}">
+                    <div class="task-row status-${t.status}" data-task-id="${escapeHtml(t.id)}">
                       <div class="task-status-col">
                         <span class="status-badge badge-${t.status}">${escapeHtml(t.status)}</span>
                       </div>
@@ -4731,7 +4825,17 @@
       });
     }
   </script>
+  <script type="module">
+    const assetBase = window.location.protocol === 'file:' ? 'http://127.0.0.1:4040' : '';
+    window.__vibesyncMermaidReady = Promise.all([
+      import(`${assetBase}/assets/mermaid/mermaid.esm.min.mjs`),
+      import(`${assetBase}/assets/vibesync-workflow.mjs`)
+    ]).then(([mermaidModule]) => {
+      window.__vibesyncMermaid = mermaidModule.default;
+      window.__vibesyncMermaid.initialize({ startOnLoad: false, securityLevel: 'strict', flowchart: { htmlLabels: false, useMaxWidth: false, curve: 'linear' } });
+      window.dispatchEvent(new Event('vibesync-mermaid-ready'));
+      return window.__vibesyncMermaid;
+    });
+  </script>
 </body>
 </html>
-
-

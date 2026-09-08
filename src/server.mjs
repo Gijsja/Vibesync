@@ -6,6 +6,7 @@
  */
 
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { bundledDashboardPath } from './init.mjs';
 import { startTask, getTrunk } from './workspace.mjs';
 import { featureInput, taskInput } from './input.mjs';
@@ -27,6 +28,9 @@ import { previewTask, previewFeature } from './policy.mjs';
 import { scanSecretEntries } from './secrets.mjs';
 import { cleanAbandonedGateSlots } from './scheduler.mjs';
 import { buildLeaseRollup, listLeaseRollups } from './audit.mjs';
+
+const mermaidAssetsRoot = path.dirname(fileURLToPath(import.meta.resolve('mermaid/dist/mermaid.esm.min.mjs')));
+const workflowAssetPath = fileURLToPath(new URL('./workflow.mjs', import.meta.url));
 
 function scanChangedWorkspaceSecrets(repoRoot) {
   const files = execGitWithBackoff(['ls-files', '-m', '-o', '--exclude-standard', '-z'], { cwd: repoRoot, raw: true }).split('\0').filter(Boolean);
@@ -383,6 +387,26 @@ export async function startServer(options = {}) {
       }
 
       if (pathname === '/favicon.ico') { res.writeHead(204); return res.end(); }
+
+      // Bundled browser-only assets. Resolve every request below the Mermaid
+      // distribution root so the dashboard works without a CDN, while never
+      // exposing arbitrary package files or filesystem paths.
+      if (pathname === '/assets/vibesync-workflow.mjs' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+        return fs.createReadStream(workflowAssetPath).pipe(res);
+      }
+      if (pathname.startsWith('/assets/mermaid/') && req.method === 'GET') {
+        let relativePath;
+        try { relativePath = decodeURIComponent(pathname.slice('/assets/mermaid/'.length)); } catch { throw requestError(404, 'Asset not found'); }
+        if (!relativePath || relativePath.includes('\0') || path.isAbsolute(relativePath) || !relativePath.endsWith('.mjs')) throw requestError(404, 'Asset not found');
+        const candidate = path.resolve(mermaidAssetsRoot, relativePath);
+        const root = fs.realpathSync(mermaidAssetsRoot);
+        let realCandidate;
+        try { realCandidate = fs.realpathSync(candidate); } catch { throw requestError(404, 'Asset not found'); }
+        if (!realCandidate.startsWith(root + path.sep) || !fs.statSync(realCandidate).isFile()) throw requestError(404, 'Asset not found');
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+        return fs.createReadStream(realCandidate).pipe(res);
+      }
 
       // 1. Static Dashboard serving
       if ((pathname === '/' || pathname === '/index.html') && req.method === 'GET') {
