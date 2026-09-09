@@ -1,0 +1,7 @@
+interface:
+  display_name: "VibeSync MCP"
+  short_description: "Control local VibeSync task workflows"
+  default_prompt: "Use $vibesync-mcp to inspect and safely progress this VibeSync task."
+
+policy:
+  allow_implicit_invocation: false
