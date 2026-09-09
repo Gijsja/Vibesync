@@ -50,7 +50,7 @@ const TOOL_ROLES = Object.freeze({
   vibesync_get_lease_rollup: 'admin',
   vibesync_route_task: 'admin', vibesync_adapter_status: 'admin',
   vibesync_policy_status: 'admin', vibesync_migrate_policy: 'admin',
-  vibesync_get_state: 'admin', vibesync_list_ready_tasks: 'worker', vibesync_get_task_detail: 'worker',
+  vibesync_get_state: 'admin', vibesync_get_summary: 'admin', vibesync_get_operation: 'admin', vibesync_list_ready_tasks: 'worker', vibesync_get_task_detail: 'worker',
   vibesync_preview_task: 'worker', vibesync_preview_feature: 'worker', vibesync_claim_task: 'worker', vibesync_heartbeat_task: 'worker',
   vibesync_partial_verify: 'worker',
   vibesync_verify_and_settle: 'worker', vibesync_park_insight: 'worker'
@@ -106,6 +106,16 @@ export function createMcpServer(options = {}) {
           type: 'object',
           properties: {}
         }
+      },
+      {
+        name: 'vibesync_get_summary',
+        description: description('Read a compact coordination summary.', 'An administrator needs feature, task, and operation status without the full ledger.', 'Do not use when raw audit, gate, or artifact detail is required.', 'Read-only; returns summaries only.'), annotations: annotations(true, false, true),
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'vibesync_get_operation',
+        description: description('Read one verification or settlement operation.', 'An administrator is following a long-running operation by ID.', 'Do not use to start, cancel, or alter an operation.', 'Read-only; returns status and stored result when complete.'), annotations: annotations(true, false, true),
+        inputSchema: { type: 'object', properties: { operation_id: { type: 'string' } }, required: ['operation_id'] }
       },
       {
         name: 'vibesync_get_lease_rollup',
@@ -297,7 +307,7 @@ export function createMcpServer(options = {}) {
           properties: {}
         }
       }
-    ];
+  ];
   const visibleTools = role === 'all' ? tools : tools.filter(tool => TOOL_ROLES[tool.name] === role);
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: visibleTools }));
 
@@ -307,7 +317,7 @@ export function createMcpServer(options = {}) {
 
     try {
       if (!visibleTools.some(tool => tool.name === name)) throw Object.assign(new Error(`Tool ${name} is not available to the ${role} MCP role.`), { code: 'ROLE_FORBIDDEN' });
-      if (!['vibesync_get_state', 'vibesync_list_ready_tasks', 'vibesync_get_task_detail'].includes(name)) assertWorkspaceIdle(db);
+      if (!['vibesync_get_state', 'vibesync_get_summary', 'vibesync_get_operation', 'vibesync_list_ready_tasks', 'vibesync_get_task_detail'].includes(name)) assertWorkspaceIdle(db);
       if (name === 'vibesync_create_feature' || name === 'vibesync_create_task' || name === 'vibesync_release_task') {
         let result;
         if (name === 'vibesync_create_feature') result = createFeature(featureInput(args), db);
@@ -322,14 +332,17 @@ export function createMcpServer(options = {}) {
       }
       if (name === 'vibesync_get_state') {
         const payload = getPayload(db, repoRoot);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(payload, null, 2)
-            }
-          ]
-        };
+        return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
+      }
+      if (name === 'vibesync_get_summary') {
+        const payload = getPayload(db, repoRoot);
+        const taskCounts = Object.fromEntries(['ready', 'in_progress', 'settled', 'blocked'].map(status => [status, payload.tasks.filter(task => task.status === status).length]));
+        return { content: [{ type: 'text', text: JSON.stringify({ workspace: payload.workspace, gitHead: payload.gitHead, features: payload.features.map(({ id, title, status }) => ({ id, title, status })), taskCounts, operations: payload.operations.slice(0, 5).map(({ id, kind, target_id, status, started_at, finished_at }) => ({ id, kind, target_id, status, started_at, finished_at })) }, null, 2) }] };
+      }
+      if (name === 'vibesync_get_operation') {
+        const row = db.prepare('SELECT * FROM operations WHERE id = ?').get(args.operation_id);
+        if (!row) throw Object.assign(new Error('Operation ' + args.operation_id + ' not found.'), { code: 'NOT_FOUND' });
+        return { content: [{ type: 'text', text: JSON.stringify({ ...row, result: row.result_json ? JSON.parse(row.result_json) : null }, null, 2) }] };
       }
 
       if (name === 'vibesync_list_ready_tasks') {
