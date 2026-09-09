@@ -173,7 +173,7 @@ export function resolveCommandSpec(command, { cwd = process.cwd(), phase = 'gate
     argv = normalizeCommand(command);
   }
 
-  if (typeof Bun !== 'undefined' && argv[0] === 'node') argv = [process.execPath, ...argv.slice(1)];
+  if (typeof Bun !== 'undefined' && argv[0] === 'node') argv = argv[1] === '--test' ? [process.execPath, 'test', ...argv.slice(2)] : [process.execPath, ...argv.slice(1)];
 
   let resolvedScript = null;
   if (type === 'npm-script') {
