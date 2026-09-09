@@ -1,18 +1,5 @@
 [
   {
-    "id": "INC-001",
-    "title": "Use Bun for all VibeSync development and verification",
-    "category": "convention",
-    "target_scope": "package scripts, task gates, agent handoffs",
-    "context_notes": "This environment does not expose node on PATH. All agents must use /home/geisha/.bun/bin/bun and Bun-compatible task gates. We are testing VibeSync as the product while completing the roadmap, so claims, previews, heartbeats, partial verification, settlement, failures, and recoveries must go through VibeSync MCP and be recorded as pilot evidence. Do not bypass coordination by editing the main checkout directly.",
-    "logged_by": "openai-codex",
-    "status": "parked",
-    "promoted_feature_id": null,
-    "merged_into_id": null,
-    "created_at": "2026-09-09 17:37:15",
-    "updated_at": "2026-09-09 17:37:15"
-  },
-  {
     "id": "INC-002",
     "title": "Expired in-progress task cannot be reclaimed through worker MCP",
     "category": "debt",
