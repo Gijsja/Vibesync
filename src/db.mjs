@@ -500,9 +500,12 @@ export function saveArtifact(content, repoRoot = process.cwd()) {
   const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, ARTIFACT_HASH_LENGTH);
   const artifactsDir = getArtifactsDir(repoRoot);
   if (!fs.existsSync(artifactsDir)) {
-    fs.mkdirSync(artifactsDir, { recursive: true });
+    fs.mkdirSync(artifactsDir, { recursive: true, mode: 0o700 });
   }
-  fs.writeFileSync(path.join(artifactsDir, `${hash}.log`), text, 'utf8');
+  fs.chmodSync(artifactsDir, 0o700);
+  const artifactPath = path.join(artifactsDir, `${hash}.log`);
+  fs.writeFileSync(artifactPath, text, { encoding: 'utf8', mode: 0o600 });
+  fs.chmodSync(artifactPath, 0o600);
   return hash;
 }
 

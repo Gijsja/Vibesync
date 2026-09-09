@@ -1,4 +1,6 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
+const queuedTests = [];
+const test = typeof Bun === 'undefined' ? nodeTest : (name, run) => queuedTests.push({ name, run });
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -87,3 +89,12 @@ test('provider handoff terminates the old process before transferring task owner
     assert.equal(collectAdapterResult(second.runId).stdout, 'handoff-ok');
   });
 });
+
+if (typeof Bun !== 'undefined') {
+  let failed = false;
+  for (const { name, run } of queuedTests) {
+    try { await run(); }
+    catch (error) { failed = true; console.error(`not ok - ${name}`, error); }
+  }
+  if (failed) process.exitCode = 1;
+}

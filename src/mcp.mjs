@@ -25,7 +25,7 @@ import { getPayload } from './server.mjs';
 import { repairDatabase } from './repair.mjs';
 import { previewTask, previewFeature, approveTaskCommand, approveFeatureCommand, getExecutionPolicy, detectSandboxCapabilities, migratePolicy } from './policy.mjs';
 import { buildLeaseRollup } from './audit.mjs';
-import { routeTask, getAdapterStatus, cancelAdapterRun, collectAdapterResult, handoffAdapterRun } from './adapters.mjs';
+import { routeTask, getAdapterStatus, cancelAdapterRun, collectAdapterResult, handoffAdapterRun, readAdapterOutput } from './adapters.mjs';
 
 const commandSchema = { oneOf: [
   { type: 'string', description: 'Legacy shell-free command string.' },
@@ -130,7 +130,8 @@ export function createMcpServer(options = {}) {
       {
         name: 'vibesync_adapter_status',
         description: description('Inspect, cancel, or collect a supervised adapter run.', 'An administrator is supervising a launched model process.', 'Do not use as task settlement or to infer provider billing.', 'Status is read-only; cancel terminates the process; collect returns redacted bounded output and removes its private context file.'), annotations: annotations(false, true, false),
-        inputSchema: { type: 'object', properties: { run_id: { type: 'string' }, action: { type: 'string', enum: ['status', 'cancel', 'collect', 'handoff'], default: 'status' },
+        inputSchema: { type: 'object', properties: { run_id: { type: 'string' }, action: { type: 'string', enum: ['status', 'cancel', 'collect', 'read', 'handoff'], default: 'status' },
+          artifact_hash: { type: 'string', description: 'Required for read.' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 16384 },
           adapter_id: { type: 'string', enum: ['gemini', 'claude', 'codex', 'local'], description: 'Required for handoff.' } }, required: ['run_id'] }
       },
       {
@@ -430,7 +431,8 @@ export function createMcpServer(options = {}) {
       if (name === 'vibesync_adapter_status') {
         const action = args.action || 'status';
         const result = action === 'cancel' ? cancelAdapterRun(args.run_id)
-          : action === 'collect' ? collectAdapterResult(args.run_id)
+          : action === 'collect' ? collectAdapterResult(args.run_id, { limit: args.limit })
+          : action === 'read' ? readAdapterOutput(args.artifact_hash, { repoRoot, offset: args.offset, limit: args.limit })
           : action === 'handoff' ? await handoffAdapterRun(args.run_id, args.adapter_id, db, repoRoot)
           : getAdapterStatus(args.run_id);
         if (onUpdate && action !== 'status') onUpdate();

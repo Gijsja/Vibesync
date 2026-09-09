@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { getDb } from './db.mjs';
+import { getDb, readArtifact, saveArtifact } from './db.mjs';
 import { getTask, releaseTaskLease, heartbeatTaskLease } from './tasks.mjs';
 import { startTask } from './workspace.mjs';
 import { getExecutionPolicy, identifyModelProfile } from './policy.mjs';
@@ -10,6 +10,38 @@ import { redactSensitive } from './commands.mjs';
 
 export const ADAPTER_IDS = Object.freeze(['gemini', 'claude', 'codex', 'local']);
 const runs = new Map();
+const MAX_OUTPUT_PREVIEW_BYTES = 16 * 1024;
+
+function outputPayload(state) {
+  return {
+    version: 1,
+    stderr: redactSensitive(state.stderr),
+    stdout: redactSensitive(state.stdout),
+    retained_bytes: state.retainedBytes,
+    dropped_bytes: state.droppedBytes,
+    limit_bytes: state.outputLimitBytes,
+    truncated: state.droppedBytes > 0
+  };
+}
+
+function persistOutput(state, repoRoot) {
+  if (state.outputArtifactHash) return state.outputArtifactHash;
+  state.outputArtifactHash = saveArtifact(outputPayload(state), repoRoot);
+  return state.outputArtifactHash;
+}
+
+function removePrivateRunFiles(state) {
+  try { fs.rmSync(path.dirname(state.contextFile), { recursive: true, force: true }); } catch {}
+}
+
+function appendOutput(state, key, chunk) {
+  const bytes = Buffer.from(chunk);
+  const remaining = Math.max(0, state.outputLimitBytes - state.retainedBytes);
+  const retained = bytes.subarray(0, remaining);
+  state[key] += retained.toString();
+  state.retainedBytes += retained.length;
+  state.droppedBytes += bytes.length - retained.length;
+}
 
 function safeConfig(id, raw = {}) {
   if (!ADAPTER_IDS.includes(id)) throw new Error(`Unsupported adapter: ${id}.`);
@@ -60,17 +92,18 @@ export class AdapterProcess {
     const env = { PATH: process.env.PATH || '/usr/bin:/bin', LANG: process.env.LANG || 'C.UTF-8' };
     for (const name of this.config.allowedEnv) if (process.env[name] !== undefined) env[name] = process.env[name];
     const child = spawn(this.config.executable, argv, { cwd: worktreePath, env, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
-    const state = { runId, adapter: this.id, actorName, taskId: task.id, worktreePath, contextFile, child,
+    const outputLimitBytes = getExecutionPolicy(repoRoot).resource_policy.output_limit_bytes;
+    const state = { runId, adapter: this.id, actorName, taskId: task.id, worktreePath, contextFile, child, repoRoot,
       status: 'running', pid: child.pid || null, startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, signal: null,
-      stdout: '', stderr: '', timeout: null, heartbeatTimer: null };
-    const append = (key, chunk) => { state[key] = redactSensitive((state[key] + chunk.toString()).slice(-1024 * 1024)); };
-    child.stdout?.on('data', chunk => append('stdout', chunk));
-    child.stderr?.on('data', chunk => append('stderr', chunk));
-    child.on('error', error => { state.status = 'failed'; state.stderr = redactSensitive(error.message); state.finishedAt = new Date().toISOString(); });
-    child.on('exit', (code, signal) => { state.exitCode = code; state.signal = signal;
+      stdout: '', stderr: '', outputLimitBytes, retainedBytes: 0, droppedBytes: 0, outputArtifactHash: null, timeout: null, heartbeatTimer: null };
+    child.stdout?.on('data', chunk => appendOutput(state, 'stdout', chunk));
+    child.stderr?.on('data', chunk => appendOutput(state, 'stderr', chunk));
+    child.on('error', error => { state.status = 'failed'; appendOutput(state, 'stderr', Buffer.from(error.message)); state.finishedAt = new Date().toISOString(); persistOutput(state, repoRoot); });
+    child.on('close', (code, signal) => { state.exitCode = code; state.signal = signal;
       if (state.status !== 'failed' && state.status !== 'cancelled') state.status = code === 0 ? 'completed' : 'failed';
-      state.finishedAt = new Date().toISOString(); clearTimeout(state.timeout); clearInterval(state.heartbeatTimer); });
-    state.timeout = setTimeout(() => { state.status = 'failed'; state.stderr = `${state.stderr}\nAdapter timed out after ${this.config.timeoutMs}ms`.trim(); child.kill('SIGTERM'); }, this.config.timeoutMs);
+      state.finishedAt = new Date().toISOString(); clearTimeout(state.timeout); clearInterval(state.heartbeatTimer); persistOutput(state, repoRoot);
+      if (state.status === 'cancelled') removePrivateRunFiles(state); });
+    state.timeout = setTimeout(() => { state.status = 'failed'; appendOutput(state, 'stderr', Buffer.from(`\nAdapter timed out after ${this.config.timeoutMs}ms`)); child.kill('SIGTERM'); }, this.config.timeoutMs);
     state.timeout.unref?.();
     if (typeof supervisorHeartbeat === 'function' && heartbeatEveryMs) {
       state.heartbeatTimer = setInterval(() => {
@@ -93,7 +126,9 @@ function publicState(state) {
   if (!state) return null;
   return { runId: state.runId, adapter: state.adapter, actorName: state.actorName, taskId: state.taskId,
     worktreePath: state.worktreePath, status: state.status, pid: state.pid, startedAt: state.startedAt,
-    finishedAt: state.finishedAt, exitCode: state.exitCode, signal: state.signal };
+    finishedAt: state.finishedAt, exitCode: state.exitCode, signal: state.signal,
+    output: { artifact_hash: state.outputArtifactHash, retained_bytes: state.retainedBytes,
+      dropped_bytes: state.droppedBytes, limit_bytes: state.outputLimitBytes, truncated: state.droppedBytes > 0 } };
 }
 
 export function resolveAdapter(modelHint, repoRoot = process.cwd(), explicitId = null) {
@@ -136,17 +171,35 @@ export function heartbeatAdapter(runId) { return getAdapterStatus(runId); }
 export function cancelAdapterRun(runId) {
   const state = runs.get(runId);
   if (!state) throw Object.assign(new Error(`Adapter run ${runId} not found.`), { code: 'ADAPTER_RUN_NOT_FOUND' });
-  if (state.status === 'running') { state.status = 'cancelled'; state.child.kill('SIGTERM'); }
+  if (state.status === 'running') {
+    state.status = 'cancelled';
+    state.child.kill('SIGTERM');
+    removePrivateRunFiles(state);
+  }
   return publicState(state);
 }
 
-export function collectAdapterResult(runId, { cleanup = true } = {}) {
+export function readAdapterOutput(artifactHash, { repoRoot = process.cwd(), offset = 0, limit = MAX_OUTPUT_PREVIEW_BYTES } = {}) {
+  if (!Number.isInteger(offset) || offset < 0) throw new Error('offset must be a non-negative integer.');
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_OUTPUT_PREVIEW_BYTES) throw new Error(`limit must be an integer from 1 to ${MAX_OUTPUT_PREVIEW_BYTES}.`);
+  const content = readArtifact(artifactHash, repoRoot);
+  if (content === null) throw Object.assign(new Error('Adapter output artifact was not found.'), { code: 'ADAPTER_OUTPUT_NOT_FOUND' });
+  const output = JSON.parse(content);
+  const text = JSON.stringify(output, null, 2);
+  return { artifact_hash: artifactHash, offset, limit, total_bytes: Buffer.byteLength(text), data: text.slice(offset, offset + limit),
+    truncated: offset + limit < text.length, retention: { retained_bytes: output.retained_bytes, dropped_bytes: output.dropped_bytes, limit_bytes: output.limit_bytes } };
+}
+
+export function collectAdapterResult(runId, { cleanup = true, limit = MAX_OUTPUT_PREVIEW_BYTES } = {}) {
   const state = runs.get(runId);
   if (!state) throw Object.assign(new Error(`Adapter run ${runId} not found.`), { code: 'ADAPTER_RUN_NOT_FOUND' });
   if (state.status === 'running') throw Object.assign(new Error('Adapter run is still active.'), { code: 'ADAPTER_STILL_RUNNING' });
-  const result = { ...publicState(state), stdout: state.stdout, stderr: state.stderr };
+  const artifactHash = persistOutput(state, state.repoRoot);
+  const payload = outputPayload(state);
+  const result = { ...publicState(state), stdout: payload.stdout.slice(0, MAX_OUTPUT_PREVIEW_BYTES), stderr: payload.stderr.slice(0, MAX_OUTPUT_PREVIEW_BYTES),
+    output: readAdapterOutput(artifactHash, { repoRoot: state.repoRoot, limit }) };
   if (cleanup) {
-    try { fs.rmSync(path.dirname(state.contextFile), { recursive: true, force: true }); } catch {}
+    removePrivateRunFiles(state);
     runs.delete(runId);
   }
   return result;
