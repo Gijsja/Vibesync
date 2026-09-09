@@ -687,7 +687,7 @@ export function releaseTaskLease(taskId, db = getDb()) {
  */
 export function checkAndExpireLeases(db = getDb()) {
   const expired = db.prepare(
-    "SELECT * FROM tasks WHERE status = 'in_progress' AND lease_expires_at IS NOT NULL AND datetime(lease_expires_at) <= datetime('now')"
+    "SELECT * FROM tasks WHERE status = 'in_progress' AND lease_expires_at IS NOT NULL AND datetime(lease_expires_at) <= datetime('now') AND NOT EXISTS (SELECT 1 FROM operations WHERE status = 'running' AND kind = 'task' AND target_id = tasks.id) AND (SELECT COUNT(*) FROM settlement_events WHERE task_id = tasks.id AND action = 'lease_expired') < 3"
   ).all();
   let released = 0;
   for (const task of expired) {
@@ -698,6 +698,7 @@ export function checkAndExpireLeases(db = getDb()) {
           assigned_actor = NULL,
           lease_expires_at = NULL,
           lease_token_hash = NULL,
+          lease_generation = lease_generation + 1,
           last_heartbeat_at = NULL,
           progress_fingerprint = NULL,
           last_progress_at = NULL,
@@ -706,6 +707,8 @@ export function checkAndExpireLeases(db = getDb()) {
           lease_grace_at = NULL,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND status = 'in_progress' AND assigned_actor IS ? AND lease_expires_at IS ?
+        AND NOT EXISTS (SELECT 1 FROM operations WHERE status = 'running' AND kind = 'task' AND target_id = tasks.id)
+        AND (SELECT COUNT(*) FROM settlement_events WHERE task_id = tasks.id AND action = 'lease_expired') < 3
         AND datetime(lease_expires_at) <= datetime('now')
     `).run(task.id, task.assigned_actor, task.lease_expires_at);
     if (!result.changes) continue;
@@ -718,9 +721,12 @@ export function checkAndExpireLeases(db = getDb()) {
       commit_ref: 'HEAD',
       evidence_payload: {
         reason: 'lease_ttl_expired',
+        recovery: 'STALE_LEASE_RECOVERABLE',
         previous_actor: task.assigned_actor,
+        previous_workspace: task.worktree_path || null,
         expired_at: task.lease_expires_at,
-        lease_run_id: task.lease_run_id || null
+        lease_run_id: task.lease_run_id || null,
+        lease_generation: task.lease_generation + 1
       }
     });
   }

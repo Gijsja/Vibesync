@@ -185,3 +185,7 @@ npm test
 
 Tests use temporary Git repositories, subprocesses, SQLite databases, and local
 HTTP listeners. Run them in an environment that permits those capabilities.
+
+### Stale lease recovery
+
+Expired leases are automatically returned to `ready` only when no task verification is running. Recovery clears the opaque token, advances `lease_generation`, preserves prior actor/workspace/run evidence, records `STALE_LEASE_RECOVERABLE`, and stops after three automatic recoveries for administrator review.
