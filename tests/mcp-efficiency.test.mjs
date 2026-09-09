@@ -13,7 +13,7 @@ test('MCP baseline keeps every declared tool, role, and safety section intact', 
     const server = createMcpServer({ db, repoRoot: sandbox.dir });
     const handler = server._requestHandlers.get(ListToolsRequestSchema.shape.method.value);
     const tools = (await handler({ method: 'tools/list', params: {} })).tools;
-    assert.equal(tools.length, 24);
+    assert.equal(tools.length, 26);
     for (const tool of tools) assert.match(tool.description, /Purpose:.*When to use:.*When NOT to use:.*Side effects:/s);
     assert.ok(tools.some(tool => tool.name === 'vibesync_verify_and_settle'));
     assert.ok(tools.some(tool => tool.name === 'vibesync_get_lease_rollup'));
