@@ -370,6 +370,11 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
   if (task.status === 'blocked' && actorName !== 'human') {
     throw new Error(`Task ${taskId} is currently blocked by circuit breaker. Requires human intervention.`);
   }
+  const labels = typeof task.labels === 'string' ? JSON.parse(task.labels) : (task.labels || []);
+  const dependencyIds = labels.filter(label => /^after-TASK-/.test(label)).map(label => label.slice('after-'.length));
+  const unsettled = dependencyIds.filter(id => db.prepare('SELECT status FROM tasks WHERE id = ?').get(id)?.status !== 'settled');
+  if (unsettled.length) throw new Error('Task ' + taskId + ' is not ready; settle dependency: ' + unsettled.join(', '));
+
 
   // 3. Double-Lease Rejection with TTL Check
   if (task.status === 'in_progress') {
