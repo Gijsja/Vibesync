@@ -1,1 +1,15 @@
-[]
+[
+  {
+    "id": "INC-004",
+    "title": "Reclaimed task worktree omits prior uncommitted deliverables",
+    "category": "debt",
+    "target_scope": "workspace provisioning and task recovery",
+    "context_notes": "Product-test baseline after responsible reclaim of TASK-EFF.2: heartbeat succeeded with lease_generation 2, git diff gate passed, but the Bun test gate failed because tests/adapter-output.test.mjs was absent in the managed worktree. Existing EFF.2 implementation had been left uncommitted in the main checkout by the prior actor and was not preserved or surfaced during recovery. Recovery must expose/preserve prior workspace changes or explicitly report that they are unavailable before handing work to a new actor.",
+    "logged_by": "openai-codex",
+    "status": "parked",
+    "promoted_feature_id": null,
+    "merged_into_id": null,
+    "created_at": "2026-09-09 17:49:33",
+    "updated_at": "2026-09-09 17:49:33"
+  }
+]
