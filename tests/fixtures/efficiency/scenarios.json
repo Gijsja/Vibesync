@@ -1,0 +1,9 @@
+{
+  "scenarios": [
+    {"id":"successful_settlement","outcome":"settled","completion_quality":"complete","elapsed_ms":1200,"verification_attempts":[{"status":"passed"}],"output_recovery_reads":0},
+    {"id":"failed_test_repair","outcome":"settled","completion_quality":"complete","elapsed_ms":2300,"verification_attempts":[{"status":"failed"},{"status":"passed"}],"output_recovery_reads":1},
+    {"id":"scope_violation","outcome":"blocked","completion_quality":"guarded","elapsed_ms":400,"verification_attempts":[{"status":"failed"}],"output_recovery_reads":0},
+    {"id":"expired_lease","outcome":"expired","completion_quality":"incomplete","elapsed_ms":800,"verification_attempts":[],"output_recovery_reads":0},
+    {"id":"provider_handoff","outcome":"settled","completion_quality":"complete","elapsed_ms":1800,"verification_attempts":[{"status":"passed"}],"output_recovery_reads":2}
+  ]
+}
