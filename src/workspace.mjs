@@ -20,7 +20,8 @@ function installScopeHook(worktreePath, allowedPaths) {
   fs.writeFileSync(dataPath, JSON.stringify(allowedPaths), 'utf8');
   const hookPath = path.join(hooksDir, 'pre-commit');
   const guardUrl = new URL('./guard.mjs', import.meta.url).href;
-  const script = `#!/bin/sh\nexec node --input-type=module -e 'import fs from "node:fs"; import path from "node:path"; import { checkScopeBoundary } from ${JSON.stringify(guardUrl)}; const allowed=JSON.parse(fs.readFileSync(path.join(process.cwd(),".vibesync","hooks","allowed_paths.json"),"utf8")); const result=checkScopeBoundary(process.cwd(),allowed,{stagedOnly:true}); if(!result.valid){console.error("VibeSync scope violation. Commit blocked:"); console.error(result.violations.join("\\n")); process.exit(1);}'\n`;
+  const runtime = JSON.stringify(process.execPath);
+  const script = `#!/bin/sh\nexec ${runtime} --input-type=module -e 'import fs from "node:fs"; import path from "node:path"; import { checkScopeBoundary } from ${JSON.stringify(guardUrl)}; const allowed=JSON.parse(fs.readFileSync(path.join(process.cwd(),".vibesync","hooks","allowed_paths.json"),"utf8")); const result=checkScopeBoundary(process.cwd(),allowed,{stagedOnly:true}); if(!result.valid){console.error("VibeSync scope violation. Commit blocked:"); console.error(result.violations.join("\\n")); process.exit(1);}'\n`;
   fs.writeFileSync(hookPath, script, { encoding: 'utf8', mode: 0o755 });
   return hookPath;
 }

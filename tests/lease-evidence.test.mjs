@@ -26,7 +26,7 @@ import { computeWorkspaceFingerprint } from '../src/fingerprint.mjs';
 import { MODEL_PROFILES } from '../src/policy.mjs';
 import { readStateCheckpoint, restoreStateCheckpoint } from '../src/durability.mjs';
 import { initSchema } from '../src/db.mjs';
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from '../src/db.mjs';
 
 // --------------------------------------------------------------------------
 // Helpers

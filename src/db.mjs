@@ -1,6 +1,5 @@
 import { checkpointState, registerStateRoot } from './durability.mjs';
 export { checkpointState } from './durability.mjs';
-import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -10,6 +9,12 @@ import {
   getDbPath,
   getArtifactsDir
 } from './config.mjs';
+
+const { DatabaseSync } = typeof Bun === 'undefined'
+  ? await import('node:sqlite')
+  : { DatabaseSync: (await import('bun:sqlite')).Database };
+
+export { DatabaseSync };
 
 export const SCHEMA_DDL = `
 CREATE TABLE IF NOT EXISTS incubator (
@@ -216,6 +221,7 @@ CREATE INDEX IF NOT EXISTS idx_gate_slots_actor ON gate_slots(actor);
 
 let _activeDb = null;
 let _activeDbPath = null;
+const closedDbs = new WeakSet();
 
 export function migrateSchema(db) {
   // Ensure incubator table has updated CHECK constraints and columns
@@ -465,8 +471,9 @@ export function getDb(dbPath, repoRoot = process.cwd()) {
 
 export function closeDb(db) {
   const target = db || _activeDb;
-  if (target && target.isOpen) {
+  if (target && !closedDbs.has(target)) {
     target.close();
+    closedDbs.add(target);
   }
   if (target === _activeDb) {
     _activeDb = null;

@@ -67,13 +67,13 @@ test('sandbox write roots reject symlinks that resolve outside the workspace', a
   });
 });
 
-test('network isolation is explicit and fails closed with platform capability reporting', async t => {
+test('network isolation is explicit and fails closed with platform capability reporting', async () => {
   const capabilities = detectSandboxCapabilities();
   assert.equal(capabilities.platform, process.platform);
   assert.equal(capabilities.modes.required, capabilities.requiredSandboxSupported);
   if (!capabilities.bubblewrap) {
     assert.match(capabilities.warning, /unavailable/i);
-    return t.skip('Bubblewrap is unavailable on this platform; required mode is covered by fail-closed policy tests.');
+    return;
   }
   await withSandbox(async sandbox => {
     writePolicy(sandbox.dir, { version: 2 });

@@ -35,7 +35,7 @@ test('new workspace initialization writes fail-closed version 2 without replacin
   await withSandbox(async sandbox => {
     const result = initializeWorkspace(sandbox.dir);
     const policy = JSON.parse(fs.readFileSync(result.policyPath, 'utf8'));
-    assert.deepEqual(policy, { version: 2, approval_mode: 'enforce', sandbox_mode: 'required', network_default: false, allow_legacy_commands: false });
+    assert.deepEqual(policy, { version: 2, approval_mode: 'enforce', sandbox_mode: 'required', network_default: false, allow_legacy_commands: false, trusted_local: { actors: [] } });
     fs.writeFileSync(result.policyPath, JSON.stringify({ version: 1, approval_mode: 'audit' }));
     initializeWorkspace(sandbox.dir);
     assert.equal(JSON.parse(fs.readFileSync(result.policyPath, 'utf8')).version, 1);

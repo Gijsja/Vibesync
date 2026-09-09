@@ -16,7 +16,7 @@ function git(root, args, input) {
 /** Durable checkpoints never touch the working tree or index. Compare-and-swap prevents lost updates. */
 export function checkpointState(db, explicitRoot) {
   const root = explicitRoot || roots.get(db);
-  if (!root || !db.isOpen || db.isTransaction) return null;
+  if (!root || db.isOpen === false || db.isTransaction || db.inTransaction) return null;
   try { git(root, ['rev-parse', '--git-dir']); } catch { return null; }
   for (let attempt = 0; attempt < 5; attempt++) {
     let previous = '';

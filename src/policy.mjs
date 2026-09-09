@@ -62,6 +62,7 @@ export function getExecutionPolicy(repoRoot = process.cwd()) {
     const policy = { ...defaults, ...configured, resource_policy: resource, adapters };
     if (!['audit', 'enforce'].includes(policy.approval_mode)) throw new Error('approval_mode must be audit or enforce.');
     if (!['process', 'auto', 'required'].includes(policy.sandbox_mode)) throw new Error('sandbox_mode must be process, auto, or required.');
+    if (policy.trusted_local !== undefined && (!policy.trusted_local || typeof policy.trusted_local !== 'object' || !Array.isArray(policy.trusted_local.actors) || policy.trusted_local.actors.some(actor => typeof actor !== 'string' || !actor.trim()))) throw new Error('trusted_local must contain a non-empty string actors array.');
     return policy;
   } catch (error) {
     if (error.code === 'ENOENT') return { version: 1, ...POLICY_V1_DEFAULTS, ...common };
@@ -158,7 +159,7 @@ export function resolveCommandSpec(command, { cwd = process.cwd(), phase = 'gate
     if (!['safe', 'unsafe'].includes(idempotency)) throw new Error('idempotency must be "safe" or "unsafe".');
     if (timeoutMs !== null && (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000)) throw new Error('timeout_ms must be between 1 and 3600000.');
     if (type === 'argv') argv = normalizeCommand(command.argv || command.command);
-    else if (type === 'node-test') argv = ['node', '--test', ...args];
+    else if (type === 'node-test') argv = typeof Bun === 'undefined' ? ['node', '--test', ...args] : [process.execPath, 'test', ...args];
     else if (type === 'pytest') argv = ['python', '-m', 'pytest', ...args];
     else if (type === 'make') {
       if (typeof command.target !== 'string' || !/^[A-Za-z0-9_.:/-]+$/.test(command.target)) throw new Error('make gates require a safe target.');
@@ -166,17 +167,24 @@ export function resolveCommandSpec(command, { cwd = process.cwd(), phase = 'gate
     } else if (type === 'npm-script') {
       script = command.script;
       if (typeof script !== 'string' || !/^[A-Za-z0-9_.:-]+$/.test(script)) throw new Error('npm-script gates require a safe script name.');
-      argv = ['npm', 'run', script, ...(args.length ? ['--', ...args] : [])];
+      argv = typeof Bun === 'undefined' ? ['npm', 'run', script, ...(args.length ? ['--', ...args] : [])] : [process.execPath, 'run', script, ...args];
     } else throw new Error(`Unknown structured command type: ${type}.`);
   } else {
     argv = normalizeCommand(command);
   }
 
+  if (typeof Bun !== 'undefined' && argv[0] === 'node') argv = [process.execPath, ...argv.slice(1)];
+
   let resolvedScript = null;
   if (type === 'npm-script') {
     try {
       const scripts = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).scripts || {};
-      resolvedScript = { pre: scripts[`pre${script}`] || null, main: scripts[script] || null, post: scripts[`post${script}`] || null };
+      const bunScript = script + ':bun';
+      if (typeof Bun !== 'undefined' && scripts[bunScript]) {
+        script = bunScript;
+        argv = [process.execPath, 'run', script, ...args];
+      }
+      resolvedScript = { pre: scripts['pre' + script] || null, main: scripts[script] || null, post: scripts['post' + script] || null };
     } catch {}
   }
   let resolvedExecutable = null;
@@ -255,14 +263,19 @@ function bubblewrapWriteRoots(cwd, writePaths) {
   return [...roots].sort((a, b) => a.length - b.length);
 }
 
-export function prepareSandboxedCommand(spec, cwd, repoRoot = process.cwd(), allowedWritePaths = ['*']) {
+export function prepareSandboxedCommand(spec, cwd, repoRoot = process.cwd(), allowedWritePaths = ['*'], { actorName = 'unknown' } = {}) {
   const policy = getExecutionPolicy(repoRoot);
+  const requireTrustedLocal = () => {
+    if (policy.trusted_local && !policy.trusted_local.actors.includes(actorName)) throw Object.assign(new Error(`Process sandbox requires an explicit trusted_local exception for actor ' + actorName + '.`), { code: 'TRUSTED_LOCAL_REQUIRED', phase: 'TRUSTED_LOCAL_REQUIRED' });
+  };
   if (policy.sandbox_mode === 'process') {
+    requireTrustedLocal();
     return { argv: spec.argv, sandbox: 'process', warning: spec.network ? 'Network access was declared but is not isolated in process sandbox mode.' : 'Process sandbox sanitizes environment and limits time/output; OS filesystem and network isolation are not active.' };
   }
   const writeRoots = bubblewrapWriteRoots(cwd, spec.write_paths?.length ? spec.write_paths : allowedWritePaths);
   if (!hasBubblewrap()) {
     if (policy.sandbox_mode === 'required') throw Object.assign(new Error('Bubblewrap sandbox is required by policy but unavailable on this host.'), { code: 'SANDBOX_UNAVAILABLE', phase: 'SANDBOX_UNAVAILABLE' });
+    requireTrustedLocal();
     return { argv: spec.argv, sandbox: 'process', warning: 'Bubblewrap unavailable; using hardened process mode.' };
   }
   const argv = ['bwrap', '--die-with-parent', '--new-session', '--ro-bind', '/', '/', '--dev', '/dev', '--ro-bind', cwd, cwd];

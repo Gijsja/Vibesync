@@ -30,7 +30,9 @@ subscriptions. Connect your own MCP-capable coding client, or use the dashboard.
 
 ## Try it locally
 
-You will need **Node.js 24+** and Git with `merge-tree --write-tree` support.
+You will need Git with `merge-tree --write-tree` support and either **Node.js 22.13+** or **Bun 1.3+**.
+
+Node 24+ remains recommended for Node users. Node 22.13+ is supported but reports Node's experimental SQLite warning.
 
 ```sh
 git clone https://github.com/Gijsja/Vibesync.git
@@ -48,6 +50,19 @@ To use VibeSync with a different project, run from this checkout:
 node scripts/vibesync.mjs --init --repo /absolute/path/to/your-project
 node scripts/vibesync.mjs --hud --repo /absolute/path/to/your-project
 ```
+
+### One-time Bun install
+
+Install this checkout as a Bun global package once, then use the Bun-native CLI from any project:
+
+```sh
+cd /absolute/path/to/Vibesync
+bun link
+vibesync-bun --init --repo /absolute/path/to/your-project
+vibesync-bun --hud --repo /absolute/path/to/your-project
+```
+
+If `vibesync-bun` is not found, add `bun pm bin -g` to your shell `PATH`. The existing `vibesync` command remains the Node.js entrypoint.
 
 Initialization preserves existing MCP configuration, dashboards, and user files.
 It creates no sample tasks and does not stage your source files.

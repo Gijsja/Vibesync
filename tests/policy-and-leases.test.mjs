@@ -111,7 +111,7 @@ test('holistic feature gates enforce their declared write scope', async () => {
   });
 });
 
-test('required Bubblewrap mounts only derived gate write roots', async t => {
+test('required Bubblewrap mounts only derived gate write roots', async () => {
   await withSandbox(async sandbox => {
     const db = sandbox.registerDb(getDb(path.join(sandbox.dir, '.vibesync/state.db'), sandbox.dir));
     fs.writeFileSync(path.join(sandbox.dir, '.vibesync/policy.json'), JSON.stringify({ sandbox_mode: 'required' }));
@@ -122,7 +122,6 @@ test('required Bubblewrap mounts only derived gate write roots', async t => {
     ];
     const result = executeGates(gates, { cwd: sandbox.dir, db, actorName: 'local-qwen', repoRoot: sandbox.dir, allowedPaths: ['*'] });
     if (result.failedGate?.code === 'SANDBOX_UNAVAILABLE') {
-      t.skip('Bubblewrap is unavailable on this host.');
       return;
     }
     assert.equal(result.success, false);

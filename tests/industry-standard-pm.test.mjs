@@ -11,11 +11,11 @@
  * - Self-Healing Disaster Recovery (vibesync:repair)
  */
 
-import test from 'node:test';
+import test from './bun-node-test.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from '../src/db.mjs';
 
 import { withSandbox } from './harness.mjs';
 import { getDb, closeDb, initSchema, migrateSchema } from '../src/db.mjs';

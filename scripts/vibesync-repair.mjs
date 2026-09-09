@@ -28,6 +28,7 @@ async function main() {
   const db = getDb(temporary, root);
   try {
     const result = repairDatabase(root, db);
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
     closeDb(db);
     const existing = ['', '-wal', '-shm'].filter(suffix => fs.existsSync(target + suffix));
     let backup = null;

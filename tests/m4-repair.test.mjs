@@ -11,7 +11,7 @@
  * - Standalone CLI execution via scripts/vibesync-repair.mjs
  */
 
-import test from 'node:test';
+import test from './bun-node-test.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -87,7 +87,7 @@ test('Milestone 4 Suite: Self-Healing Disaster Recovery', async (t) => {
         feature_id: 'FEAT-42',
         title: 'Deformation Matrix',
         allowed_paths: ['*'],
-        required_gates: ['node -e "process.exit(0)"']
+        required_gates: [{ type: 'argv', argv: [process.execPath, '-e', 'process.exit(0)']}]
       }, db);
 
       const claimRes = claimTask({
@@ -178,7 +178,7 @@ test('Milestone 4 Suite: Self-Healing Disaster Recovery', async (t) => {
 
       // Run repair CLI in sandbox cwd
       const scriptPath = path.resolve(process.cwd(), 'scripts', 'vibesync-repair.mjs');
-      const proc = spawnSync('node', [scriptPath], {
+      const proc = spawnSync(process.execPath, [scriptPath], {
         cwd: sandbox.dir,
         encoding: 'utf8'
       });

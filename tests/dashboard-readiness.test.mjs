@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from '../src/db.mjs';
 import { initSchema, migrateSchema } from '../src/db.mjs';
 import { execGitWithBackoff } from '../src/incubator.mjs';
 import { withSandbox } from './harness.mjs';

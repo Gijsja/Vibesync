@@ -26,13 +26,17 @@
   },
   "scripts": {
     "test": "node --test tests/**/*.test.mjs",
+    "test:bun": "bun test tests",
     "test:runner": "node tests/runner.mjs",
     "test:m1": "node --test tests/m1-state-engine.test.mjs",
     "test:m2": "node --test tests/m2-judicial-harness.test.mjs",
     "start": "node scripts/vibesync.mjs",
+    "start:bun": "bun scripts/vibesync-bun.mjs",
     "init": "node scripts/vibesync-init.mjs",
     "repair": "node scripts/vibesync-repair.mjs",
+    "repair:bun": "bun scripts/vibesync-bun-repair.mjs",
     "hud": "node scripts/vibesync.mjs --hud",
+    "hud:bun": "bun scripts/vibesync-bun.mjs --hud",
     "check:public": "node scripts/check-public.mjs"
   },
   "dependencies": {
@@ -41,7 +45,7 @@
     "picomatch": "^4.0.7"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=22.13.0"
   },
   "license": "MIT",
   "repository": {
@@ -54,18 +58,23 @@
   "homepage": "https://github.com/Gijsja/Vibesync#readme",
   "bin": {
     "vibesync": "./scripts/vibesync.mjs",
+    "vibesync-bun": "./scripts/vibesync-bun.mjs",
+    "vibesync-bun-repair": "./scripts/vibesync-bun-repair.mjs",
     "vibesync-init": "./scripts/vibesync-init.mjs",
     "vibesync-repair": "./scripts/vibesync-repair.mjs"
   },
   "files": [
     "src/",
     "scripts/vibesync.mjs",
+    "scripts/vibesync-bun.mjs",
+    "scripts/vibesync-bun-repair.mjs",
     "scripts/vibesync-init.mjs",
     "scripts/vibesync-repair.mjs",
     "scripts/check-public.mjs",
     "scripts/export-public.mjs",
     ".vibesync/dashboard.html",
     ".mcp.example.json",
+    ".mcp.bun.example.json",
     "README.md",
     "HARDENING.md",
     "docs/USAGE.md",

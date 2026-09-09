@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "vibesync": {
+      "command": "vibesync-bun",
+      "args": [
+        "--repo",
+        "/absolute/path/to/your-project"
+      ]
+    }
+  }
+}

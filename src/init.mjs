@@ -55,7 +55,8 @@ export function initializeWorkspace(repoRoot = process.cwd()) {
     approval_mode: 'enforce',
     sandbox_mode: 'required',
     network_default: false,
-    allow_legacy_commands: false
+    allow_legacy_commands: false,
+    trusted_local: { actors: [] }
   }, null, 2) + '\n');
   const dashboardPath = path.join(repoRoot, '.vibesync', 'dashboard.html');
   if (!fs.existsSync(dashboardPath)) fs.copyFileSync(bundledDashboardPath, dashboardPath);

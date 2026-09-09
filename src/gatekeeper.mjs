@@ -125,7 +125,7 @@ export function executeGates(gates, cwdOrOptions = process.cwd(), maybeOptions =
       return { success: false, pass: false, gatesRun, failedGate, errorPayload: { cmd: failedGate.cmd, exitCode: 1, failure: error.message, error: error.message, code: error.code } };
     }
     let sandbox;
-    try { sandbox = prepareSandboxedCommand(spec, cwd, opts.repoRoot || cwd, opts.allowedPaths || ['*']); }
+    try { sandbox = prepareSandboxedCommand(spec, cwd, opts.repoRoot || cwd, opts.allowedPaths || ['*'], { actorName: opts.actorName || 'unknown' }); }
     catch (error) {
       const failedGate = { cmd: spec.display, argv: spec.argv, exitCode: 1, summary: error.message, error: error.message, code: error.code, policyHash: spec.policyHash };
       return { success: false, pass: false, gatesRun, failedGate, errorPayload: { cmd: failedGate.cmd, exitCode: 1, failure: error.message, error: error.message, code: error.code } };
