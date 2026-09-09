@@ -189,3 +189,7 @@ HTTP listeners. Run them in an environment that permits those capabilities.
 ### Stale lease recovery
 
 Expired leases are automatically returned to `ready` only when no task verification is running. Recovery clears the opaque token, advances `lease_generation`, preserves prior actor/workspace/run evidence, records `STALE_LEASE_RECOVERABLE`, and stops after three automatic recoveries for administrator review.
+
+## MCP connection and long operations
+
+Enable the local `vibesync` server from `.mcp.json` in your MCP client. Use the worker role for task selection, claims, heartbeats, partial verification, and settlement; start with `--mcp-role admin` only for contract and feature administration. Prefer `vibesync_get_summary` for routine coordination rather than the full `vibesync_get_state` ledger. When a verification request is long-running, retain its operation ID and call `vibesync_get_operation` for its current status and stored result instead of repeating the mutation.
