@@ -23,7 +23,7 @@ import {
   getHudUrlPath,
   getDashboardPath
 } from './config.mjs';
-import { computeProviderUsage, updateProviderUsageConfig } from './usage.mjs';
+import { computeProviderUsage, computeFeatureEfficiency, updateProviderUsageConfig } from './usage.mjs';
 import { previewTask, previewFeature } from './policy.mjs';
 import { scanSecretEntries } from './secrets.mjs';
 import { cleanAbandonedGateSlots } from './scheduler.mjs';
@@ -215,6 +215,7 @@ export function getPayload(db = getDb(), repoRoot = process.cwd()) {
     ORDER BY id DESC
     LIMIT 25
   `).all() || [];
+  const featureEfficiency = Object.fromEntries(features.map(feature => [feature.id, computeFeatureEfficiency(feature.id, db)]));
 
   const agents = synthesizeAgents(tasks, providers, events);
   const conventions = getConventions(db) || [];
@@ -228,6 +229,7 @@ export function getPayload(db = getDb(), repoRoot = process.cwd()) {
     incubator,
     conventions,
     events,
+    featureEfficiency,
     gateRuns,
     gateApprovals,
     leaseRollups,
