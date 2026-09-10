@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { normalizeCommand, displayCommand } from './commands.mjs';
 import { checkpointState } from './durability.mjs';
+import { inspectBaselineReadiness } from './workspace.mjs';
 
 export const MODEL_PROFILES = Object.freeze({
   // stagnantWarningBeats: unchanged heartbeats before entering "warning" state
@@ -367,8 +368,10 @@ export function previewTask({ taskId, actorName = 'unknown' }, db, repoRoot = pr
     return { phase, index, ...spec, approval, estimated_ms: Math.round(history?.average_ms || 0), prior_runs: history?.runs || 0 };
   }));
   const model = identifyModelProfile(actorName);
+  const baseline = inspectBaselineReadiness(repoRoot, parseJson(task.allowed_paths, ['*']));
   return {
     task: { id: task.id, feature_id: task.feature_id, title: task.title, status: task.status, allowed_paths: parseJson(task.allowed_paths, []), model_hint: task.model_hint || null },
+    baseline,
     model,
     suitability: task.model_hint && task.model_hint !== model.id ? 'review_recommended' : 'suitable',
     commands,

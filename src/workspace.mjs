@@ -5,6 +5,7 @@ import { getFeature } from './features.mjs';
 import { claimTask, getTask, releaseTaskLease, hydrateActiveTaskAnchor } from './tasks.mjs';
 import { executeGates } from './gatekeeper.mjs';
 import { execGitWithBackoff } from './incubator.mjs';
+import { compileGlobMatcher } from './guard.mjs';
 
 function git(cwd, args) {
   return execGitWithBackoff(args, { cwd });
@@ -93,6 +94,38 @@ export function inspectWorkspaceDeliverables(worktreePath, baseCommit = 'HEAD') 
   };
 }
 
+export function inspectBaselineReadiness(repoRoot, allowedPaths = ['*']) {
+  if (!repoRoot || !fs.existsSync(repoRoot)) {
+    return { clean: true, uncommitted_files: [], allowed_paths_affected: [], warning: null };
+  }
+  let uncommitted_files = [];
+  try {
+    const rawStatus = git(repoRoot, ['status', '--porcelain', '-uall']);
+    uncommitted_files = rawStatus
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => Boolean(line) && !line.includes('.vibesync'))
+      .map(line => line.slice(3).trim());
+  } catch {}
+
+  const matcher = compileGlobMatcher(Array.isArray(allowedPaths) && allowedPaths.length ? allowedPaths : ['*']);
+  const allowed_paths_affected = uncommitted_files.filter(f => matcher(f));
+
+  let warning = null;
+  if (allowed_paths_affected.length > 0) {
+    warning = `Repository root has uncommitted changes affecting task allowed_paths (${allowed_paths_affected.join(', ')}). These changes are not present in the managed worktree.`;
+  } else if (uncommitted_files.length > 0) {
+    warning = `Repository root has ${uncommitted_files.length} uncommitted file(s); managed worktree was branched from committed trunk HEAD.`;
+  }
+
+  return {
+    clean: uncommitted_files.length === 0,
+    uncommitted_files,
+    allowed_paths_affected,
+    warning
+  };
+}
+
 /** Claim a task and provision its actual isolated Git worktree. Never reset an existing branch. */
 export function startTask({ taskId, actorName = 'human' }, db, repoRoot) {
   const task = getTask(taskId, db);
@@ -122,10 +155,12 @@ export function startTask({ taskId, actorName = 'human' }, db, repoRoot) {
       }
     }
     const workspaceStatus = inspectWorkspaceDeliverables(worktreePath, baseCommit);
+    const baseline = inspectBaselineReadiness(repoRoot, scopedTask.allowed_paths);
     const activeTaskAnchorPath = hydrateActiveTaskAnchor(worktreePath, getTask(taskId, db), getFeature(task.feature_id, db), workspaceStatus);
     checkpointState(db);
     return { success: true, task: getTask(taskId, db), worktreePath, activeTaskAnchorPath, preCommitHookPath,
       workspaceStatus,
+      baseline,
       leaseToken: result.leaseToken, heartbeatMinutes: result.heartbeatMinutes, modelProfile: result.modelProfile };
   } catch (err) {
     releaseTaskLease(taskId, db);
