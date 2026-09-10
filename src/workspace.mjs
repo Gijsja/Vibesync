@@ -64,6 +64,35 @@ function preflightTaskWorkspace({ taskId, repoRoot }) {
   return { branch, worktreePath, branchExists };
 }
 
+export function inspectWorkspaceDeliverables(worktreePath, baseCommit = 'HEAD') {
+  if (!worktreePath || !fs.existsSync(worktreePath)) {
+    return { clean: true, uncommitted_files: [], commits_ahead: 0 };
+  }
+  let uncommitted_files = [];
+  try {
+    const rawStatus = git(worktreePath, ['status', '--porcelain', '-uall']);
+    uncommitted_files = rawStatus
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => Boolean(line) && !line.includes('.vibesync'))
+      .map(line => line.slice(3).trim());
+  } catch {}
+
+  let commits_ahead = 0;
+  try {
+    if (baseCommit && baseCommit !== '0000000') {
+      const aheadStr = git(worktreePath, ['rev-list', '--count', `${baseCommit}..HEAD`]);
+      commits_ahead = parseInt(aheadStr.trim(), 10) || 0;
+    }
+  } catch {}
+
+  return {
+    clean: uncommitted_files.length === 0 && commits_ahead === 0,
+    uncommitted_files,
+    commits_ahead
+  };
+}
+
 /** Claim a task and provision its actual isolated Git worktree. Never reset an existing branch. */
 export function startTask({ taskId, actorName = 'human' }, db, repoRoot) {
   const task = getTask(taskId, db);
@@ -92,9 +121,11 @@ export function startTask({ taskId, actorName = 'human' }, db, repoRoot) {
         throw error;
       }
     }
-    const activeTaskAnchorPath = hydrateActiveTaskAnchor(worktreePath, getTask(taskId, db), getFeature(task.feature_id, db));
+    const workspaceStatus = inspectWorkspaceDeliverables(worktreePath, baseCommit);
+    const activeTaskAnchorPath = hydrateActiveTaskAnchor(worktreePath, getTask(taskId, db), getFeature(task.feature_id, db), workspaceStatus);
     checkpointState(db);
     return { success: true, task: getTask(taskId, db), worktreePath, activeTaskAnchorPath, preCommitHookPath,
+      workspaceStatus,
       leaseToken: result.leaseToken, heartbeatMinutes: result.heartbeatMinutes, modelProfile: result.modelProfile };
   } catch (err) {
     releaseTaskLease(taskId, db);

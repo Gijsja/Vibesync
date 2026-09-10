@@ -315,7 +315,7 @@ export function supersedeTask({ taskId, replacementTaskId, actorName }, db = get
  * @param {object} feature 
  * @returns {string|null} Path to generated anchor file
  */
-export function hydrateActiveTaskAnchor(worktreePath, task, feature) {
+export function hydrateActiveTaskAnchor(worktreePath, task, feature, workspaceStatus = null) {
   if (!worktreePath) return null;
   fs.mkdirSync(worktreePath, { recursive: true });
 
@@ -331,6 +331,23 @@ export function hydrateActiveTaskAnchor(worktreePath, task, feature) {
     ? task.labels.join(', ')
     : 'none';
 
+  let priorStateSection = '';
+  if (task.lease_generation > 1 || (workspaceStatus && !workspaceStatus.clean)) {
+    const uncommitted = workspaceStatus?.uncommitted_files || [];
+    const commitsAhead = workspaceStatus?.commits_ahead || 0;
+    if (uncommitted.length === 0 && commitsAhead === 0) {
+      priorStateSection = `\n## Prior Workspace State (Generation ${task.lease_generation || 1})\nClean working tree (no uncommitted deliverables preserved from prior leases).\n`;
+    } else {
+      const items = [];
+      if (commitsAhead > 0) items.push(`- Commits ahead of base: ${commitsAhead}`);
+      if (uncommitted.length > 0) {
+        items.push(`- Uncommitted deliverables (${uncommitted.length} files):`);
+        for (const f of uncommitted) items.push(`  - \`${f}\``);
+      }
+      priorStateSection = `\n## Prior Workspace State (Generation ${task.lease_generation || 1})\n${items.join('\n')}\n`;
+    }
+  }
+
   const content = `# ACTIVE TASK: ${task.id} - ${task.title}
 
 **Parent Feature:** ${feature ? `${feature.id} (${feature.title})` : task.feature_id}  
@@ -339,6 +356,7 @@ export function hydrateActiveTaskAnchor(worktreePath, task, feature) {
 **Labels:** ${labelsText}  
 **External Ref:** ${task.external_ref || 'none'}  
 **Assigned Actor:** ${task.assigned_actor || 'unassigned'}  
+**Lease Generation:** ${task.lease_generation || 1}  
 **Branch:** ${task.branch_name || 'N/A'}  
 **Base Commit:** ${task.base_commit || 'N/A'}  
 **Lease Expires:** ${task.lease_expires_at || 'N/A'}  
@@ -348,7 +366,7 @@ ${feature?.spec_markdown || 'No feature specification recorded.'}
 
 ## Feature Completion Gate
 ${feature?.holistic_gate_cmd || 'No holistic gate recorded.'}
-
+${priorStateSection}
 ## Allowed Scopes (Path Whitelist)
 ${allowedList}
 
