@@ -208,12 +208,14 @@ export function performSquashSettlement(params) {
   try { originalBranch = git(['symbolic-ref', '--short', 'HEAD']); } catch { originalBranch = originalTip; }
   const originalTarget = git(['rev-parse', '--verify', `refs/heads/${targetBranch}`]);
 
-  if (worktreePath) {
-    if (!fs.existsSync(worktreePath)) throw new Error('Task workspace is missing.');
-    const branch = execGitWithBackoff(['symbolic-ref', '--short', 'HEAD'], { cwd: worktreePath });
-    if (branch !== task.branch_name) throw new Error('Task workspace branch does not match the task.');
-    execGitWithBackoff(['add', '-A'], { cwd: worktreePath });
-    execGitWithBackoff(['commit', '--allow-empty', '-F', '-'], { cwd: worktreePath, input: `feat(${task.id}): verified implementation` });
+  const effectiveWorktreePath = worktreePath || task.worktree_path || null;
+
+  if (effectiveWorktreePath && fs.existsSync(effectiveWorktreePath)) {
+    const branch = execGitWithBackoff(['symbolic-ref', '--short', 'HEAD'], { cwd: effectiveWorktreePath });
+    if (branch === task.branch_name) {
+      execGitWithBackoff(['add', '-A'], { cwd: effectiveWorktreePath });
+      execGitWithBackoff(['commit', '--allow-empty', '-F', '-'], { cwd: effectiveWorktreePath, input: `feat(${task.id}): verified implementation` });
+    }
   }
   const mergeSim = simulateMergeTree(targetBranch, task.branch_name, repoRoot);
   if (!mergeSim.clean) throw Object.assign(new Error(mergeSim.error || 'Merge conflict detected against trunk.'), { phase: 'MERGE_COLLISION', conflictFiles: mergeSim.conflictFiles });
@@ -285,13 +287,13 @@ export function performSquashSettlement(params) {
     } catch (err) { try { db.exec('ROLLBACK'); } catch {} throw err; }
     try { checkpointState(db); } catch (err) { warnings.push(`Settlement is recorded locally but its Git checkpoint failed: ${err.message}`); }
     try { restoreDeveloper(); } catch (err) { warnings.push(`Developer work restoration needs attention. Your stash is preserved as ${stashSha || 'the existing Git stash'}: ${err.message}`); }
-    if (worktreePath) {
+    if (effectiveWorktreePath && fs.existsSync(effectiveWorktreePath)) {
       try {
-        execGitWithBackoff(['checkout', '--detach'], { cwd: worktreePath });
-        const anchor = path.join(worktreePath, '.vibesync_ACTIVE_TASK.md');
+        execGitWithBackoff(['checkout', '--detach'], { cwd: effectiveWorktreePath });
+        const anchor = path.join(effectiveWorktreePath, '.vibesync_ACTIVE_TASK.md');
         if (fs.existsSync(anchor)) fs.unlinkSync(anchor);
-        try { execGitWithBackoff(['config', '--worktree', '--unset', 'core.hooksPath'], { cwd: worktreePath }); } catch {}
-        const hooks = path.join(worktreePath, '.vibesync', 'hooks');
+        try { execGitWithBackoff(['config', '--worktree', '--unset', 'core.hooksPath'], { cwd: effectiveWorktreePath }); } catch {}
+        const hooks = path.join(effectiveWorktreePath, '.vibesync', 'hooks');
         if (fs.existsSync(hooks)) fs.rmSync(hooks, { recursive: true, force: true });
       } catch (err) { warnings.push(`Task workspace cleanup: ${err.message}`); }
     }
@@ -360,7 +362,6 @@ export function performSquashSettlement(params) {
 export function verifyAndSettleTask(params, maybeDb, maybeRepoRoot) {
   const taskId = params.taskId;
   const actorName = params.actorName || 'unknown';
-  const worktreePath = params.worktreePath || null;
   const repoRoot = params.repoRoot || maybeRepoRoot || process.cwd();
   const db = params.db || maybeDb || getDb();
 
@@ -369,6 +370,7 @@ export function verifyAndSettleTask(params, maybeDb, maybeRepoRoot) {
   if (!task) {
     throw new Error(`Task ${taskId} not found.`);
   }
+  const worktreePath = params.worktreePath || task.worktree_path || null;
 
   if (task.status === 'settled') {
     throw new Error(`Task ${taskId} is already settled.`);
