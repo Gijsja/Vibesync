@@ -1,4 +1,4 @@
-# VibeSync
+# VibeSync (v0.5.0 Developer Preview)
 
 **A little control room for your AI coding team.**
 
@@ -9,6 +9,8 @@ you one local place to organize that work and see what is happening.
 Turn ideas into feature contracts, give each task its own Git worktree, and let
 real verification commands decide when a change is ready to merge. A live
 light/dark dashboard and animated pixel agent room make the process easy to follow.
+
+> **Developer Preview Notice (v0.5.0):** VibeSync uses standard Git, lightweight SQLite storage, and the Model Context Protocol (MCP). Because Node's built-in `node:sqlite` module is marked experimental by upstream Node.js runtime maintainers, VibeSync is currently designated as a **v0.5.0 Developer Preview** rather than a finalized 1.x release. All core coordination, judicial gate enforcement, worktree sandboxing, and disaster recovery features are complete and covered by our test suite.
 
 ## What you can do
 
