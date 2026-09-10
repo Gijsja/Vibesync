@@ -42,7 +42,11 @@ test('adapter output discloses cap overflow and cancellation clears private cont
     const adapter = new AdapterProcess('local', { executable: process.execPath, argv_template: ['-e', "process.stdout.write('a'.repeat(128));setInterval(()=>{},1000)"] });
     const run = adapter.start({ task: { id: 'TASK-CANCEL', title: 'Cancel' }, worktreePath: sandbox.dir, actorName: 'local', repoRoot: sandbox.dir });
     const contextDirectory = path.join(sandbox.dir, '.vibesync', 'adapter-runs', run.runId);
-    await new Promise(resolve => setTimeout(resolve, 50));
+    for (let index = 0; index < 50; index++) {
+      const current = getAdapterStatus(run.runId);
+      if (current?.output?.dropped_bytes > 0) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
     cancelAdapterRun(run.runId);
     const state = await waitForExit(run.runId);
     assert.equal(state.output.dropped_bytes > 0, true);

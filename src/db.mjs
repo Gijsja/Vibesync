@@ -46,11 +46,11 @@ export function deserializeJsonField(value, fallback = null) {
   if (value === undefined || value === null) return fallback;
   if (typeof value === 'object') return value;
   if (typeof value !== 'string') return fallback;
-  try {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
     return JSON.parse(value);
-  } catch {
-    return fallback;
   }
+  return value;
 }
 
 export const SCHEMA_DDL = `

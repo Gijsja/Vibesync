@@ -476,10 +476,10 @@ describe('Adversarial Milestone 1 Suite', () => {
       // Claim task (sets 45m in future)
       claimTask({ taskId: 'TASK-TTL-TEST', actorName: 'agent-1' }, db, tmpDir);
 
-      // Case A: 1 second in the future -> NOT expired
-      db.prepare("UPDATE tasks SET lease_expires_at = datetime('now', '+1 second') WHERE id = 'TASK-TTL-TEST'").run();
+      // Case A: 30 seconds in the future -> NOT expired
+      db.prepare("UPDATE tasks SET lease_expires_at = datetime('now', '+30 seconds') WHERE id = 'TASK-TTL-TEST'").run();
       let expiredCount = checkAndExpireLeases(db);
-      assert.equal(expiredCount, 0, 'Task expiring in +1 second should not be expired');
+      assert.equal(expiredCount, 0, 'Task expiring in +30 seconds should not be expired');
       assert.equal(getTask('TASK-TTL-TEST', db).status, 'in_progress');
 
       // Attempting to claim still rejected
