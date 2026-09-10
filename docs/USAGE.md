@@ -8,9 +8,8 @@ themes.
 
 ## Requirements
 
-- Node.js 24 or later (uses built-in SQLite).
+- Node.js 22.13+ or 24+ (uses built-in SQLite), or Bun 1.3+.
 - Git with `merge-tree --write-tree` support.
-- A local repository with a `main` or `master` trunk.
 
 ## Run from this checkout
 
@@ -35,13 +34,21 @@ vibesync --init --repo /absolute/path/to/project
 vibesync --hud --repo /absolute/path/to/project
 ```
 
-Initialization creates the SQLite database, installs the dashboard, adds runtime
-ignore rules, and merges a VibeSync server binding into `.mcp.json`. Existing MCP
-servers and custom dashboards are preserved. New repositories receive an empty
-initial Git commit; user files are not staged or committed. Existing repositories
-keep their history. No sample features or tasks are inserted. New workspaces also
-receive policy version 2, which requires command approval and Linux Bubblewrap,
-denies undeclared network access, and disables legacy command contracts.
+Initialization connects an existing Git repository at its root, creates the SQLite
+database, installs the dashboard, adds local runtime exclusions through
+`.git/info/exclude`, and merges a VibeSync server binding into `.mcp.json`. Existing
+MCP servers, custom dashboards, and `.gitignore` are preserved. A folder without
+Git is initialized with a VibeSync-owned empty anchor commit so worktrees work
+immediately; user files are never staged or committed. Existing repositories keep
+their history. No sample features or tasks are inserted. New workspaces also receive
+policy version 2, which requires command approval and Linux Bubblewrap, denies
+undeclared network access, and disables legacy command contracts.
+
+### Bun-native command
+
+From the VibeSync checkout, run `bun link` once. Then use `vibesync-bun --init
+--repo /absolute/path/to/project` (and `vibesync-bun --hud --repo ...`) from any
+local project. If the command is not found, add `bun pm bin -g` to your shell `PATH`.
 
 `vibesync --help` lists runtime options. Use `--port 0` to choose a free port.
 

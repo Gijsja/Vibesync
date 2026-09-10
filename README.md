@@ -64,8 +64,13 @@ vibesync-bun --hud --repo /absolute/path/to/your-project
 
 If `vibesync-bun` is not found, add `bun pm bin -g` to your shell `PATH`. The existing `vibesync` command remains the Node.js entrypoint.
 
-Initialization preserves existing MCP configuration, dashboards, and user files.
-It creates no sample tasks and does not stage your source files.
+Initialization connects an existing Git repository at its root. For a folder that
+is not yet a repository, it initializes Git and creates one VibeSync-owned empty
+anchor commit, so managed worktrees work immediately. It preserves existing MCP
+configuration, dashboards, `.gitignore`, and user files; it creates no sample
+tasks and never stages or commits user source files. VibeSync runtime files are
+ignored locally through Git's `info/exclude` instead of changing your project’s
+tracked ignore rules.
 
 ## Your first workflow
 
