@@ -109,6 +109,10 @@ function compactPreview(preview) {
     gate_count: preview.commands?.length || 0,
     approval_required: blockedApprovals,
     estimated_verification_ms: preview.estimated_verification_ms || 0,
+    ...(preview.baseline ? {
+      baseline_clean: preview.baseline.clean,
+      ...(preview.baseline.warning ? { baseline_warning: preview.baseline.warning } : {})
+    } : {}),
     next_action: blockedApprovals
       ? 'Request an administrator to approve the listed task commands before claiming.'
       : 'Claim the task when you are ready to work in its isolated worktree.'

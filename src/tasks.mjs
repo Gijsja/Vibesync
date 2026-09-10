@@ -15,6 +15,7 @@ import { execGitWithBackoff } from './incubator.mjs';
 import { TASK_STATUSES, PRIORITY_LEVELS } from './config.mjs';
 import { identifyModelProfile } from './policy.mjs';
 import { computeWorkspaceFingerprint } from './fingerprint.mjs';
+import { inspectBaselineReadiness } from './workspace.mjs';
 
 /**
  * Validates task identifier syntax.
@@ -315,9 +316,24 @@ export function supersedeTask({ taskId, replacementTaskId, actorName }, db = get
  * @param {object} feature 
  * @returns {string|null} Path to generated anchor file
  */
-export function hydrateActiveTaskAnchor(worktreePath, task, feature, workspaceStatus = null) {
+export function hydrateActiveTaskAnchor(worktreePath, task, feature, workspaceStatus = null, baseline = null) {
   if (!worktreePath) return null;
   fs.mkdirSync(worktreePath, { recursive: true });
+
+  let effectiveBaseline = baseline || workspaceStatus?.baseline || null;
+  if (!effectiveBaseline && worktreePath) {
+    try {
+      const repoRoot = path.resolve(worktreePath, '../../..');
+      if (fs.existsSync(path.join(repoRoot, '.vibesync'))) {
+        effectiveBaseline = inspectBaselineReadiness(repoRoot, task.allowed_paths);
+      }
+    } catch {}
+  }
+
+  let baselineSection = '';
+  if (effectiveBaseline && !effectiveBaseline.clean && effectiveBaseline.warning) {
+    baselineSection = `\n## Repository Baseline Notice\n> **Notice:** ${effectiveBaseline.warning}\n`;
+  }
 
   const allowedList = task.allowed_paths && task.allowed_paths.length > 0
     ? task.allowed_paths.map(p => `- \`${p}\``).join('\n')
@@ -366,7 +382,7 @@ ${feature?.spec_markdown || 'No feature specification recorded.'}
 
 ## Feature Completion Gate
 ${feature?.holistic_gate_cmd || 'No holistic gate recorded.'}
-${priorStateSection}
+${priorStateSection}${baselineSection}
 ## Allowed Scopes (Path Whitelist)
 ${allowedList}
 

@@ -71,6 +71,68 @@ test('previewTask includes baseline readiness diagnostic in returned preview', a
   });
 });
 
+test('hydrateActiveTaskAnchor includes Repository Baseline Notice when baseline has warnings', async () => {
+  await withSandbox(async sandbox => {
+    const db = sandbox.registerDb(getDb(path.join(sandbox.dir, '.vibesync', 'state.db'), sandbox.dir));
+    const feature = createFeature({ id: 'FEAT-T2', title: 'Test feature', target_milestone: 'v1.0', spec_markdown: 'Spec text' }, db);
+    const task = createTask({
+      id: 'TASK-T2.1',
+      feature_id: 'FEAT-T2',
+      title: 'Task anchor baseline test',
+      allowed_paths: ['src/app.mjs']
+    }, db);
+
+    const worktreeDir = path.join(sandbox.dir, '.vibesync', 'worktrees', 'test-task');
+    fs.mkdirSync(worktreeDir, { recursive: true });
+    const baseline = {
+      clean: false,
+      uncommitted_files: ['src/app.mjs'],
+      allowed_paths_affected: ['src/app.mjs'],
+      warning: 'Repository root has uncommitted changes affecting task allowed_paths (src/app.mjs).'
+    };
+
+    const { hydrateActiveTaskAnchor } = await import('../src/tasks.mjs');
+    hydrateActiveTaskAnchor(worktreeDir, task, feature, null, baseline);
+
+    const anchorContent = fs.readFileSync(path.join(worktreeDir, '.vibesync_ACTIVE_TASK.md'), 'utf8');
+    assert.ok(anchorContent.includes('## Repository Baseline Notice'));
+    assert.ok(anchorContent.includes('Repository root has uncommitted changes affecting task allowed_paths'));
+  });
+});
+
+test('MCP vibesync_preview_task compact response includes baseline fields', async () => {
+  await withSandbox(async sandbox => {
+    const db = sandbox.registerDb(getDb(path.join(sandbox.dir, '.vibesync', 'state.db'), sandbox.dir));
+    createFeature({ id: 'FEAT-T3', title: 'Test feature', target_milestone: 'v1.0', spec_markdown: 'Spec text' }, db);
+    createTask({
+      id: 'TASK-T3.1',
+      feature_id: 'FEAT-T3',
+      title: 'Task for MCP preview',
+      allowed_paths: ['src/app.mjs']
+    }, db);
+
+    fs.mkdirSync(path.join(sandbox.dir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(sandbox.dir, 'src', 'app.mjs'), '// modified\n');
+
+    const { createMcpServer } = await import('../src/mcp.mjs');
+    const { CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
+    const server = createMcpServer({ db, repoRoot: sandbox.dir, role: 'worker' });
+    const call = server._requestHandlers.get(CallToolRequestSchema.shape.method.value);
+
+    const res = await call({
+      method: 'tools/call',
+      params: {
+        name: 'vibesync_preview_task',
+        arguments: { task_id: 'TASK-T3.1', actor_name: 'antigravity' }
+      }
+    });
+
+    const parsed = JSON.parse(res.content[0].text);
+    assert.equal(parsed.baseline_clean, false);
+    assert.ok(parsed.baseline_warning.includes('affecting task allowed_paths'));
+  });
+});
+
 if (typeof Bun !== 'undefined') {
   let fail = false;
   for (const e of queued) {
