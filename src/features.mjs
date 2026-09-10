@@ -208,6 +208,9 @@ export function updateFeature(id, updates, db = getDb()) {
       } else if (key === 'labels') {
         setClauses.push(`${key} = ?`);
         args.push(Array.isArray(value) ? JSON.stringify(value) : value);
+      } else if (key === 'holistic_gate_cmd') {
+        setClauses.push(`${key} = ?`);
+        args.push(value && typeof value === 'object' ? JSON.stringify(value) : value);
       } else {
         setClauses.push(`${key} = ?`);
         args.push(value);

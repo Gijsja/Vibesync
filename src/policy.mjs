@@ -266,7 +266,7 @@ function bubblewrapWriteRoots(cwd, writePaths) {
 export function prepareSandboxedCommand(spec, cwd, repoRoot = process.cwd(), allowedWritePaths = ['*'], { actorName = 'unknown' } = {}) {
   const policy = getExecutionPolicy(repoRoot);
   const requireTrustedLocal = () => {
-    if (policy.trusted_local && !policy.trusted_local.actors.includes(actorName)) throw Object.assign(new Error(`Process sandbox requires an explicit trusted_local exception for actor ' + actorName + '.`), { code: 'TRUSTED_LOCAL_REQUIRED', phase: 'TRUSTED_LOCAL_REQUIRED' });
+    if (policy.trusted_local && !policy.trusted_local.actors.includes(actorName)) throw Object.assign(new Error(`Process sandbox requires an explicit trusted_local exception for actor '${actorName}'.`), { code: 'TRUSTED_LOCAL_REQUIRED', phase: 'TRUSTED_LOCAL_REQUIRED' });
   };
   if (policy.sandbox_mode === 'process') {
     requireTrustedLocal();
