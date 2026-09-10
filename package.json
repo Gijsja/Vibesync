@@ -40,9 +40,7 @@
     "check:public": "node scripts/check-public.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "mermaid": "11.17.2",
-    "picomatch": "^4.0.7"
+    "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "engines": {
     "node": ">=22.13.0"

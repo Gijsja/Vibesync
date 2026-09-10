@@ -29,7 +29,7 @@ import { scanSecretEntries } from './secrets.mjs';
 import { cleanAbandonedGateSlots } from './scheduler.mjs';
 import { buildLeaseRollup, listLeaseRollups } from './audit.mjs';
 
-const mermaidAssetsRoot = path.dirname(fileURLToPath(import.meta.resolve('mermaid/dist/mermaid.esm.min.mjs')));
+const mermaidAssetsRoot = fileURLToPath(new URL('./assets/mermaid', import.meta.url));
 const workflowAssetPath = fileURLToPath(new URL('./workflow.mjs', import.meta.url));
 
 function scanChangedWorkspaceSecrets(repoRoot) {

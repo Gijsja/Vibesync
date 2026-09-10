@@ -8,8 +8,58 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import picomatch from 'picomatch';
 import { execGitWithBackoff } from './incubator.mjs';
+
+/**
+ * Converts a POSIX glob pattern into a RegExp.
+ *
+ * @param {string} glob
+ * @returns {RegExp}
+ */
+export function globToRegex(glob) {
+  let regex = '^';
+  let i = 0;
+  while (i < glob.length) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') {
+      if (glob[i + 2] === '/') {
+        regex += '(?:.*\\/)?';
+        i += 3;
+      } else {
+        regex += '.*';
+        i += 2;
+      }
+    } else if (c === '*') {
+      regex += '[^/]*';
+      i++;
+    } else if (c === '?') {
+      regex += '[^/]';
+      i++;
+    } else if ('+?.^$()[]{}|'.includes(c)) {
+      regex += '\\' + c;
+      i++;
+    } else if (c === '\\') {
+      regex += '\\\\';
+      i++;
+    } else {
+      regex += c;
+      i++;
+    }
+  }
+  regex += '$';
+  return new RegExp(regex);
+}
+
+/**
+ * Compiles a list of glob patterns into a matcher function.
+ *
+ * @param {string[]} patterns
+ * @returns {(file: string) => boolean}
+ */
+export function compileGlobMatcher(patterns) {
+  const regexes = patterns.map(globToRegex);
+  return (file) => regexes.some(rx => rx.test(file));
+}
 
 /**
  * Checks whether a path attempts directory traversal outside the repository or sandbox.
@@ -347,7 +397,7 @@ export function validatePathWhitelist(changedFiles, allowedPaths, options = {}) 
 
   // Expand and normalize patterns
   const expandedPatterns = rawPatterns.flatMap(normalizePattern);
-  const matcher = picomatch(expandedPatterns, { dot: true, posix: true });
+  const matcher = compileGlobMatcher(expandedPatterns);
 
   const violations = filesList.filter(file => !matcher(file));
 
