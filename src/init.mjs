@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
 import { getDb, closeDb } from './db.mjs';
+import { execGitWithBackoff } from './incubator.mjs';
 
 const runtimePath = fileURLToPath(new URL('../scripts/vibesync.mjs', import.meta.url));
 export const bundledDashboardPath = fileURLToPath(new URL('../.vibesync/dashboard.html', import.meta.url));
@@ -11,7 +11,7 @@ const ignores = ['.vibesync/*.db', '.vibesync/*.db-wal', '.vibesync/*.db-shm', '
 
 /** Local exclusions survive stashing an uncommitted .gitignore. */
 export function ensureRuntimeExcludes(repoRoot) {
-  const excludePath = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+  const excludePath = execGitWithBackoff(['rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'], { cwd: repoRoot });
   fs.mkdirSync(path.dirname(excludePath), { recursive: true });
   const existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf8') : '';
   const missing = ignores.filter(line => !existing.split(/\r?\n/).includes(line));
@@ -28,7 +28,9 @@ export function initializeWorkspace(repoRoot = process.cwd()) {
       (config.mcpServers !== undefined && (!config.mcpServers || typeof config.mcpServers !== 'object' || Array.isArray(config.mcpServers)))) {
     throw new Error('Existing .mcp.json must contain an object with an optional mcpServers object.');
   }
-  const git = args => execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  // Keep initialization pinned to the requested checkout even when it is
+  // launched through npm, which prepends project-local executables to PATH.
+  const git = args => execGitWithBackoff(args, { cwd: repoRoot });
   try {
     const root = git(['rev-parse', '--show-toplevel']);
     if (fs.realpathSync(root) !== fs.realpathSync(repoRoot)) throw new Error('Initialize from the repository root.');

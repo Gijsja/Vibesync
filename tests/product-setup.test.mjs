@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { initializeWorkspace } from '../src/init.mjs';
 import { getDb, closeDb } from '../src/db.mjs';
 import { startServer } from '../src/server.mjs';
@@ -43,6 +44,25 @@ test('invalid MCP config is rejected before changing a workspace', () => {
     assert.throws(() => initializeWorkspace(root));
     assert.equal(fs.existsSync(path.join(root, '.git')), false);
     assert.equal(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'), '{broken');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('setup ignores an npm-local git executable', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vibesync-init-git-shim-'));
+  const shimDir = path.join(root, 'node_modules', '.bin');
+  try {
+    fs.mkdirSync(shimDir, { recursive: true });
+    const shimPath = path.join(shimDir, 'git');
+    fs.writeFileSync(shimPath, '#!/bin/sh\necho "unexpected local git shim" >&2\nexit 77\n');
+    fs.chmodSync(shimPath, 0o755);
+    const entry = `import { initializeWorkspace } from ${JSON.stringify(pathToFileURL(path.resolve('src/init.mjs')).href)}; initializeWorkspace(${JSON.stringify(root)});`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', entry], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${shimDir}${path.delimiter}${process.env.PATH}` }
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(git(root, 'rev-parse', '--show-toplevel'), root);
+    assert.match(git(root, 'log', '-1', '--format=%s'), /initialize VibeSync repository/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
