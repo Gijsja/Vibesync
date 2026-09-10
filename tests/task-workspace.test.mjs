@@ -36,6 +36,25 @@ test('starting a task provisions its real branch, preserves work on release and 
   });
 });
 
+test('a stale task branch is rejected before it can receive a lease', async () => {
+  await withSandbox(async sandbox => {
+    const db = getDb(path.join(sandbox.dir, '.vibesync/state.db'), sandbox.dir);
+    createFeature({ id: 'FEAT-COLLISION', title: 'Collision', target_milestone: 'v1', spec_markdown: 'Do not adopt stale branches' }, db);
+    createTask({ id: 'TASK-COLLISION', feature_id: 'FEAT-COLLISION', title: 'Guard branch identity', allowed_paths: ['src/**'], required_gates: [] }, db);
+    execFileSync('git', ['branch', 'task/task-collision'], { cwd: sandbox.dir });
+
+    assert.throws(
+      () => startTask({ taskId: 'TASK-COLLISION', actorName: 'openai-codex' }, db, sandbox.dir),
+      /already exists without its managed worktree/
+    );
+
+    const task = db.prepare('SELECT status, assigned_actor, branch_name FROM tasks WHERE id = ?').get('TASK-COLLISION');
+    assert.equal(task.status, 'ready');
+    assert.equal(task.assigned_actor, null);
+    assert.equal(task.branch_name, null);
+  });
+});
+
 
 test('human takeover resets a tripped breaker and receives a fresh lease', async () => {
   await withSandbox(async sandbox => {

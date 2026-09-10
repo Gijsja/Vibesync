@@ -33,23 +33,49 @@ export function getTrunk(repoRoot) {
   throw new Error('Create a main or master branch with an initial commit before starting tasks.');
 }
 
+function taskBranchName(taskId) {
+  return `task/${taskId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+}
+
+/**
+ * Validate the deterministic task branch before a lease is issued. A branch
+ * left behind without its managed worktree may belong to earlier work and
+ * must never be silently adopted as the base for a new lease.
+ */
+function preflightTaskWorkspace({ taskId, repoRoot }) {
+  const branch = taskBranchName(taskId);
+  const worktreePath = path.join(repoRoot, '.vibesync', 'worktrees', branch.slice(5));
+  let branchExists = false;
+  try { git(repoRoot, ['rev-parse', '--verify', `refs/heads/${branch}`]); branchExists = true; } catch {}
+
+  if (!fs.existsSync(worktreePath)) {
+    if (branchExists) {
+      throw new Error(`Task branch ${branch} already exists without its managed worktree. Refusing to reuse an unknown branch; repair or remove it before claiming this task.`);
+    }
+    return { branch, worktreePath, branchExists };
+  }
+
+  const actualBranch = git(worktreePath, ['symbolic-ref', '--short', 'HEAD']);
+  const common = git(worktreePath, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  const expected = git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  if (actualBranch !== branch || common !== expected) {
+    throw new Error('Existing task worktree does not match this task repository and branch.');
+  }
+  return { branch, worktreePath, branchExists };
+}
+
 /** Claim a task and provision its actual isolated Git worktree. Never reset an existing branch. */
 export function startTask({ taskId, actorName = 'human' }, db, repoRoot) {
   const task = getTask(taskId, db);
   if (!task) throw new Error(`Task ${taskId} not found.`);
   const trunk = getTrunk(repoRoot);
+  const workspace = preflightTaskWorkspace({ taskId, repoRoot });
   const result = claimTask({ taskId, actorName }, db, repoRoot);
-  const branch = result.task.branch_name;
-  const worktreePath = path.join(repoRoot, '.vibesync', 'worktrees', branch.slice(5));
+  const { branch, worktreePath, branchExists } = workspace;
   try {
     if (fs.existsSync(worktreePath)) {
-      const actualBranch = git(worktreePath, ['symbolic-ref', '--short', 'HEAD']);
-      const common = git(worktreePath, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-      const expected = git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-      if (actualBranch !== branch || common !== expected) throw new Error('Existing task worktree does not match this task repository and branch.');
+      // Preflight already established that this is the managed task worktree.
     } else {
-      let branchExists = false;
-      try { git(repoRoot, ['rev-parse', '--verify', `refs/heads/${branch}`]); branchExists = true; } catch {}
       fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
       git(repoRoot, branchExists ? ['worktree', 'add', worktreePath, branch] : ['worktree', 'add', '-b', branch, worktreePath, trunk]);
     }
