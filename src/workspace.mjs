@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import { checkpointState } from './db.mjs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { getFeature } from './features.mjs';
 import { claimTask, getTask, releaseTaskLease, hydrateActiveTaskAnchor } from './tasks.mjs';
 import { executeGates } from './gatekeeper.mjs';
+import { execGitWithBackoff } from './incubator.mjs';
 
 function git(cwd, args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  return execGitWithBackoff(args, { cwd });
 }
 
 function installScopeHook(worktreePath, allowedPaths) {

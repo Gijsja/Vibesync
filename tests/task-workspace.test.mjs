@@ -55,6 +55,26 @@ test('a stale task branch is rejected before it can receive a lease', async () =
   });
 });
 
+test('task provisioning ignores inherited Git location variables', async () => {
+  await withSandbox(async sandbox => {
+    const db = getDb(path.join(sandbox.dir, '.vibesync/state.db'), sandbox.dir);
+    createFeature({ id: 'FEAT-GIT-ENV', title: 'Pinned Git checkout', target_milestone: 'v1', spec_markdown: 'Use the selected repository' }, db);
+    createTask({ id: 'TASK-GIT-ENV', feature_id: 'FEAT-GIT-ENV', title: 'Provision safely', allowed_paths: ['src/**'], required_gates: [] }, db);
+
+    const previousGitDir = process.env.GIT_DIR;
+    let started;
+    process.env.GIT_DIR = path.join(sandbox.dir, 'unrelated-git-directory');
+    try {
+      started = startTask({ taskId: 'TASK-GIT-ENV', actorName: 'openai-codex' }, db, sandbox.dir);
+    } finally {
+      if (previousGitDir === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = previousGitDir;
+    }
+    assert.equal(started.task.status, 'in_progress');
+    assert.equal(execFileSync('git', ['branch', '--show-current'], { cwd: started.worktreePath, encoding: 'utf8' }).trim(), started.task.branch_name);
+  });
+});
+
 
 test('human takeover resets a tripped breaker and receives a fresh lease', async () => {
   await withSandbox(async sandbox => {
