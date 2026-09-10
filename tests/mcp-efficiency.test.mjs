@@ -5,7 +5,7 @@ import { withSandbox } from './harness.mjs';
 import { getDb } from '../src/db.mjs';
 import { createMcpServer } from '../src/mcp.mjs';
 import { createFeature } from '../src/features.mjs';
-import { createTask } from '../src/tasks.mjs';
+import { createTask, supersedeTask } from '../src/tasks.mjs';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 const queuedTests = []; const test = typeof Bun === 'undefined' ? nodeTest : (n, f) => queuedTests.push({ n, f });
 
@@ -50,6 +50,23 @@ test('worker compact responses are materially smaller while full detail retains 
     const readyTask = JSON.parse(ready.content[0].text).tasks[0];
     assert.equal(readyTask.gate_count, 1);
     assert.equal('required_gates' in readyTask, false);
+  });
+});
+
+test('worker ready queue omits superseded tasks', async () => {
+  await withSandbox(async sandbox => {
+    const db = sandbox.registerDb(getDb(path.join(sandbox.dir, '.vibesync', 'state.db'), sandbox.dir));
+    createFeature({ id: 'FEAT-01', title: 'Replacement task', target_milestone: 'M1', spec_markdown: 'Only claimable tasks appear.' }, db);
+    createTask({ id: 'TASK-01.1', feature_id: 'FEAT-01', title: 'Original work', allowed_paths: ['src/mcp.mjs'], required_gates: [] }, db);
+    createTask({ id: 'TASK-01.2', feature_id: 'FEAT-01', title: 'Replacement work', allowed_paths: ['src/mcp.mjs'], required_gates: [] }, db);
+    createTask({ id: 'TASK-01.3', feature_id: 'FEAT-01', title: 'Claimable work', allowed_paths: ['src/mcp.mjs'], required_gates: [] }, db);
+    db.prepare("UPDATE tasks SET status = 'settled', settled_commit = 'abc123' WHERE id = 'TASK-01.2'").run();
+    supersedeTask({ taskId: 'TASK-01.1', replacementTaskId: 'TASK-01.2', actorName: 'human' }, db);
+
+    const server = createMcpServer({ db, repoRoot: sandbox.dir, role: 'worker' });
+    const call = server._requestHandlers.get(CallToolRequestSchema.shape.method.value);
+    const ready = JSON.parse((await call({ method: 'tools/call', params: { name: 'vibesync_list_ready_tasks', arguments: {} } })).content[0].text);
+    assert.deepEqual(ready.tasks.map(task => task.task_id), ['TASK-01.3']);
   });
 });
 

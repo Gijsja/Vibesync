@@ -430,7 +430,9 @@ export function createMcpServer(options = {}) {
       }
 
       if (name === 'vibesync_list_ready_tasks') {
-        const tasks = listTasks(db, { status: 'ready', feature_id: args.feature_id }).slice(0, args.limit || 20)
+        const tasks = listTasks(db, { status: 'ready', feature_id: args.feature_id })
+          .filter(task => !task.superseded_by_task_id)
+          .slice(0, args.limit || 20)
           .map(task => taskBrief(task));
         return { content: [{ type: 'text', text: compactText({ tasks, count: tasks.length, next_action: tasks.length ? 'Read task detail or preview a task before claiming it.' : 'No ready tasks are available.' }) }] };
       }
