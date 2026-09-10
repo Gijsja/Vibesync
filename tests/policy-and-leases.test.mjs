@@ -174,3 +174,9 @@ test('settlement blocks secrets before they reach trunk', async () => {
     assert.equal(db.prepare('SELECT consecutive_failures FROM tasks WHERE id = ?').get('TASK-SECRET').consecutive_failures, 1);
   });
 });
+
+test('legacy node --test becomes Bun test rather than Bun --test', () => {
+  const spec = resolveCommandSpec(['node', '--test', 'tests/example.test.mjs']);
+  if (typeof Bun !== 'undefined') assert.deepEqual(spec.argv.slice(1), ['test', 'tests/example.test.mjs']);
+  else assert.deepEqual(spec.argv, ['node', '--test', 'tests/example.test.mjs']);
+});

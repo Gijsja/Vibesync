@@ -2,6 +2,7 @@ import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createBaselineReport, evaluateScenario } from '../scripts/evaluate-efficiency.mjs';
+import { generatePilotReport } from '../scripts/generate-pilot-report.mjs';
 
 const queuedTests = [];
 const test = typeof Bun === 'undefined' ? nodeTest : (name, run) => queuedTests.push({ name, run });
@@ -27,6 +28,12 @@ test('unknown provider metrics stay unknown rather than becoming activity estima
 
 test('a report rejects an incomplete evaluation suite', () => {
   assert.throws(() => createBaselineReport(fixture.scenarios.slice(0, 4)), /provider_handoff/);
+});
+
+test('pilot report never invents an unavailable before/after result', () => {
+  const report = generatePilotReport();
+  assert.match(report, /no savings or quality claim/i);
+  assert.match(report, /unknown/i);
 });
 
 if (typeof Bun !== 'undefined') {

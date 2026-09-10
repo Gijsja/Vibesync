@@ -63,3 +63,9 @@ test('dashboard-only runtime handles SIGTERM and leaves no listening socket', as
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('usage guide explains compact reads and operation follow-up', () => {
+  const usage = fs.readFileSync(new URL('../docs/USAGE.md', import.meta.url), 'utf8');
+  assert.match(usage, /vibesync_get_summary/);
+  assert.match(usage, /vibesync_get_operation/);
+});

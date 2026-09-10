@@ -30,10 +30,7 @@ const COLORS = {
 };
 
 const BASE_TIERS = [
-  { id: "1", name: "Tier 1", title: "Feature Coverage", dir: "tier1-features" },
-  { id: "2", name: "Tier 2", title: "Boundary & Corner Cases", dir: "tier2-boundaries" },
-  { id: "3", name: "Tier 3", title: "Cross-Feature Combinations", dir: "tier3-combinations" },
-  { id: "4", name: "Tier 4", title: "Real-World Scenarios", dir: "tier4-scenarios" },
+  { id: "all", name: "Suite", title: "Consolidated Test Suite", dir: "." },
 ];
 
 function printUsage() {
@@ -176,22 +173,7 @@ async function main() {
         .map((entry) => entry.name)
     : [];
 
-  const tiersToRun = [...BASE_TIERS];
-  if (rootFiles.length > 0) {
-    tiersToRun.unshift({ id: "0", name: "Harness", title: "Infrastructure & Self-Tests", dir: "." });
-  }
-
-  let activeTiers;
-  if (args.tier === "all") {
-    activeTiers = tiersToRun;
-  } else {
-    activeTiers = tiersToRun.filter((t) => args.tier === t.id);
-  }
-
-  if (activeTiers.length === 0) {
-    console.error(`${COLORS.red}Error: Invalid tier selection "${args.tier}". Choose 1, 2, 3, 4, or all.${COLORS.reset}`);
-    process.exit(1);
-  }
+  const activeTiers = BASE_TIERS;
 
   const tierReports = [];
   const allFailures = [];
