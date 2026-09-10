@@ -167,3 +167,64 @@ export function startTask({ taskId, actorName = 'human' }, db, repoRoot) {
     throw err;
   }
 }
+
+export function inspectBranchDrift(worktreePath, repoRoot = process.cwd()) {
+  if (!worktreePath || !fs.existsSync(worktreePath)) {
+    return { behind_trunk: 0, ahead_trunk: 0, can_merge_cleanly: true, conflict_files: [], warning: null };
+  }
+  let branch = null;
+  let trunk = null;
+  let trunkSha = null;
+  let mergeBase = null;
+  let behindTrunk = 0;
+  let aheadTrunk = 0;
+  let canMergeCleanly = true;
+  let conflictFiles = [];
+
+  try {
+    trunk = getTrunk(repoRoot);
+    trunkSha = git(repoRoot, ['rev-parse', trunk]).trim();
+    branch = git(worktreePath, ['symbolic-ref', '--short', 'HEAD']).trim();
+    mergeBase = git(repoRoot, ['merge-base', trunk, branch]).trim();
+
+    const behindStr = git(repoRoot, ['rev-list', '--count', `${branch}..${trunk}`]);
+    behindTrunk = parseInt(behindStr.trim(), 10) || 0;
+
+    const aheadStr = git(repoRoot, ['rev-list', '--count', `${trunk}..${branch}`]);
+    aheadTrunk = parseInt(aheadStr.trim(), 10) || 0;
+
+    if (behindTrunk > 0) {
+      try {
+        git(repoRoot, ['merge-tree', '--write-tree', trunk, branch]);
+      } catch (err) {
+        canMergeCleanly = false;
+        const out = String(err.stdout || err.stderr || err.message || '');
+        const files = [];
+        for (const line of out.split('\n')) {
+          const match = line.match(/CONFLICT \([^)]+\): (?:Merge conflict in )?(.+)$/);
+          if (match) files.push(match[1].trim());
+        }
+        conflictFiles = [...new Set(files)];
+      }
+    }
+  } catch {
+    return { behind_trunk: 0, ahead_trunk: 0, can_merge_cleanly: true, conflict_files: [], warning: null };
+  }
+
+  let warning = null;
+  if (behindTrunk > 0) {
+    warning = `Task branch is ${behindTrunk} commit(s) behind ${trunk}.${canMergeCleanly ? ' Fast-forward / rebase can merge cleanly.' : ' Potential merge conflict in: ' + (conflictFiles.join(', ') || 'divergent files') + '.'}`;
+  }
+
+  return {
+    branch,
+    trunk,
+    trunk_head: trunkSha ? trunkSha.slice(0, 7) : null,
+    merge_base: mergeBase ? mergeBase.slice(0, 7) : null,
+    behind_trunk: behindTrunk,
+    ahead_trunk: aheadTrunk,
+    can_merge_cleanly: canMergeCleanly,
+    conflict_files: conflictFiles,
+    warning
+  };
+}
