@@ -147,7 +147,7 @@ export function createMcpServer(options = {}) {
   const role = options.role || 'all';
 
   const server = new Server(
-    { name: 'vibesync', version: '1.0.0' },
+    { name: 'vibesync', version: '0.5.0' },
     { capabilities: { tools: {} } }
   );
 
