@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { DatabaseSync } from '../src/db.mjs';
@@ -14,6 +15,24 @@ test('Git commands stay in the active checkout when a sibling .git_repo exists',
 
     const commonDir = execGitWithBackoff(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: sandbox.dir });
     assert.equal(commonDir, path.join(sandbox.dir, '.git'));
+
+    const inheritedGitDir = execGitWithBackoff(['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      cwd: sandbox.dir,
+      env: { GIT_DIR: sibling }
+    });
+    assert.equal(inheritedGitDir, path.join(sandbox.dir, '.git'));
+
+    const shimDir = path.join(sandbox.dir, 'node_modules', '.bin');
+    fs.mkdirSync(shimDir, { recursive: true });
+    const shimPath = path.join(shimDir, 'git');
+    fs.writeFileSync(shimPath, `#!/bin/sh\nexec /usr/bin/git --git-dir=${JSON.stringify(sibling)} "$@"\n`);
+    fs.chmodSync(shimPath, 0o755);
+    const shimmedPath = `${shimDir}${path.delimiter}${process.env.PATH}`;
+    const shimmedGit = execGitWithBackoff(['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      cwd: sandbox.dir,
+      env: { PATH: shimmedPath }
+    });
+    assert.equal(shimmedGit, path.join(sandbox.dir, '.git'));
   });
 });
 

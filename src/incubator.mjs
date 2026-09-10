@@ -42,6 +42,30 @@ function resolveGitEnv(cwd, extraEnv = {}) {
     ...extraEnv
   };
 
+  // Git's repository-location variables override `cwd`. A GUI launcher or
+  // parent agent can leave one behind, which would otherwise redirect a
+  // VibeSync command into a different checkout. Repository selection is
+  // always made by the explicit cwd passed to this helper.
+  for (const key of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_COMMON_DIR',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_NAMESPACE'
+  ]) delete merged[key];
+
+  // npm prepends node_modules/.bin to PATH. A project-local executable named
+  // `git` is not a trustworthy authority for VibeSync's repository operations;
+  // it can silently redirect every command to a different Git directory.
+  // Keep the user's regular PATH, but bypass package-manager shims.
+  const safePath = String(merged.PATH || '')
+    .split(path.delimiter)
+    .filter(entry => !path.normalize(entry).endsWith(path.join('node_modules', '.bin')))
+    .join(path.delimiter);
+  if (safePath) merged.PATH = safePath;
+
   return merged;
 }
 
