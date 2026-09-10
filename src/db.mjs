@@ -538,6 +538,42 @@ export function getDb(dbPath, repoRoot = process.cwd()) {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};`);
+
+  // Wrap db.prepare to transparently convert arrays and objects into serialized JSON strings
+  // to avoid node:sqlite 'Unknown named parameter' errors when binding structured data.
+  const originalPrepare = db.prepare.bind(db);
+  db.prepare = function (sql) {
+    const stmt = originalPrepare(sql);
+    const wrapExec = (fn) => {
+      return function (...args) {
+        if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0]) && !(args[0] instanceof Uint8Array) && !(args[0] instanceof Buffer)) {
+          // Named parameters object: sanitize each property value if it is an object or array
+          const sanitized = {};
+          for (const [k, v] of Object.entries(args[0])) {
+            if (typeof v === 'object' && v !== null && !(v instanceof Uint8Array) && !(v instanceof Buffer)) {
+              sanitized[k] = JSON.stringify(v);
+            } else {
+              sanitized[k] = v;
+            }
+          }
+          return fn.call(stmt, sanitized);
+        }
+        // Positional parameters
+        const sanitizedArgs = args.map(arg => {
+          if (typeof arg === 'object' && arg !== null && !(arg instanceof Uint8Array) && !(arg instanceof Buffer)) {
+            return JSON.stringify(arg);
+          }
+          return arg;
+        });
+        return fn.apply(stmt, sanitizedArgs);
+      };
+    };
+    stmt.run = wrapExec(stmt.run);
+    stmt.get = wrapExec(stmt.get);
+    stmt.all = wrapExec(stmt.all);
+    return stmt;
+  };
+
   initSchema(db);
   if (targetPath !== ':memory:') registerStateRoot(db, path.basename(path.dirname(targetPath)) === '.vibesync' ? path.dirname(path.dirname(path.resolve(targetPath))) : repoRoot);
 

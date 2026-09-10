@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { initializeWorkspace } from '../src/init.mjs';
+import { getDb } from '../src/db.mjs';
 
 const runtime = path.resolve('scripts/vibesync.mjs');
 test('real stdio runtime supports discovery and exits when its client closes', async () => {
@@ -68,4 +69,22 @@ test('usage guide explains compact reads and operation follow-up', () => {
   const usage = fs.readFileSync(new URL('../docs/USAGE.md', import.meta.url), 'utf8');
   assert.match(usage, /vibesync_get_summary/);
   assert.match(usage, /vibesync_get_operation/);
+});
+
+test('transparent SQLite parameter serialization handles raw objects and arrays without error', () => {
+  const db = getDb(':memory:');
+  // Raw object in positional parameter
+  const rawObj = { foo: 'bar', count: 42 };
+  const rawArr = ['item1', 'item2'];
+  db.prepare('CREATE TABLE test_params (id TEXT PRIMARY KEY, data TEXT, tags TEXT);').run();
+
+  // Test run with raw objects/arrays
+  assert.doesNotThrow(() => {
+    db.prepare('INSERT INTO test_params (id, data, tags) VALUES (?, ?, ?);').run('T1', rawObj, rawArr);
+  });
+
+  const row = db.prepare('SELECT * FROM test_params WHERE id = ?;').get('T1');
+  assert.equal(row.id, 'T1');
+  assert.equal(row.data, JSON.stringify(rawObj));
+  assert.equal(row.tags, JSON.stringify(rawArr));
 });
