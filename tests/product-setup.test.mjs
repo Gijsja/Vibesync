@@ -21,14 +21,17 @@ test('setup installs a usable empty product and preserves existing workspace con
     assert.ok(path.isAbsolute(config.mcpServers.vibesync.args[0]));
     assert.deepEqual(config.mcpServers.vibesync.args.slice(1), ['--repo', root]);
     assert.equal(git(root, 'ls-tree', '--name-only', 'HEAD'), '');
+    assert.equal(fs.existsSync(path.join(root, '.gitignore')), false);
+    const exclude = fs.readFileSync(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'), 'utf8');
+    assert.match(exclude, /# VibeSync runtime/);
+    assert.match(exclude, /^\.vibesync\/worktrees\/$/m);
     const db = getDb(null, root);
     assert.equal(db.prepare('SELECT count(*) AS n FROM features').get().n, 0);
     closeDb(db);
     fs.writeFileSync(result.dashboardPath, 'custom dashboard');
-    const initialIgnore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
     initializeWorkspace(root);
     assert.equal(fs.readFileSync(result.dashboardPath, 'utf8'), 'custom dashboard');
-    assert.equal(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), initialIgnore);
+    assert.equal(fs.existsSync(path.join(root, '.gitignore')), false);
     assert.equal(fs.readFileSync(path.join(root, 'user.txt'), 'utf8'), 'preserve');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

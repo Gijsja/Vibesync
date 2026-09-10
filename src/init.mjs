@@ -43,10 +43,6 @@ export function initializeWorkspace(repoRoot = process.cwd()) {
     git(['-c', 'user.name=VibeSync Engine', '-c', 'user.email=engine@local', 'commit', '--allow-empty', '--only', '-m', 'chore: initialize VibeSync repository']);
   }
   ensureRuntimeExcludes(repoRoot);
-  const ignorePath = path.join(repoRoot, '.gitignore');
-  const existingIgnore = fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, 'utf8') : '';
-  const missing = ignores.filter(line => !existingIgnore.split(/\r?\n/).includes(line));
-  if (missing.length) fs.writeFileSync(ignorePath, `${existingIgnore}${existingIgnore.endsWith('\n') || !existingIgnore ? '' : '\n'}\n# VibeSync local runtime\n${missing.join('\n')}\n`);
   const db = getDb(null, repoRoot);
   closeDb(db);
   const policyPath = path.join(repoRoot, '.vibesync', 'policy.json');
