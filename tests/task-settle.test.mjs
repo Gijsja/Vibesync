@@ -44,9 +44,10 @@ test('settling a task cleanly detaches worktree and deletes task branch with zer
     const branches = execFileSync('git', ['branch', '--list', 'task/task-settle-clean'], { cwd: sandbox.dir, encoding: 'utf8' }).trim();
     assert.equal(branches, '', 'Task branch should be deleted cleanly');
 
-    // Verify worktree HEAD is detached
-    const wtHead = execFileSync('git', ['status', '--short', '--branch'], { cwd: started.worktreePath, encoding: 'utf8' });
-    assert.ok(wtHead.includes('HEAD (no branch)'), 'Worktree should be in detached HEAD state');
+    // Verify worktree directory is removed and not in git worktree list
+    assert.equal(fs.existsSync(started.worktreePath), false, 'Worktree directory should be removed on settlement');
+    const wtList = execFileSync('git', ['worktree', 'list'], { cwd: sandbox.dir, encoding: 'utf8' });
+    assert.ok(!wtList.includes('task-settle-clean'), 'Worktree should be pruned from git worktree list');
   });
 });
 

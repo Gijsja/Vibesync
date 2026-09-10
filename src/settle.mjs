@@ -295,6 +295,12 @@ export function performSquashSettlement(params) {
         try { execGitWithBackoff(['config', '--worktree', '--unset', 'core.hooksPath'], { cwd: effectiveWorktreePath }); } catch {}
         const hooks = path.join(effectiveWorktreePath, '.vibesync', 'hooks');
         if (fs.existsSync(hooks)) fs.rmSync(hooks, { recursive: true, force: true });
+        try {
+          git(['worktree', 'remove', '--force', effectiveWorktreePath]);
+        } catch {
+          fs.rmSync(effectiveWorktreePath, { recursive: true, force: true });
+          try { git(['worktree', 'prune']); } catch {}
+        }
       } catch (err) { warnings.push(`Task workspace cleanup: ${err.message}`); }
     }
     try { git(['branch', '-D', '--', task.branch_name]); } catch (err) { warnings.push(`Task branch retained: ${err.message}`); }
