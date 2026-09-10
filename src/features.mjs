@@ -251,7 +251,7 @@ export function settleFeature(params, db = getDb(), repoRoot = process.cwd()) {
   // 1. Settlement Validation Invariant: Check child tasks
   const unsettledTasks = db.prepare(`
     SELECT id, status, title FROM tasks
-    WHERE feature_id = ? AND status != 'settled'
+    WHERE feature_id = ? AND status != 'settled' AND superseded_by_task_id IS NULL
   `).all(featureId);
 
   if (unsettledTasks.length > 0) {

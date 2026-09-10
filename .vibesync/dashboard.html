@@ -1093,6 +1093,12 @@
       background: var(--bg-surface);
     }
 
+    .task-row.status-superseded {
+      border-left: 3px solid #7c3aed;
+      background: #f5f3ff;
+      opacity: 0.82;
+    }
+
     [data-theme="dark"] .task-row.status-in_progress {
       background: rgba(245, 158, 11, 0.05);
     }
@@ -1104,6 +1110,9 @@
     }
     [data-theme="dark"] .task-row.status-ready {
       background: var(--bg-surface);
+    }
+    [data-theme="dark"] .task-row.status-superseded {
+      background: rgba(124, 58, 237, 0.09);
     }
 
     .task-status-col {
@@ -1152,6 +1161,12 @@
       background: var(--panel-hover);
       color: var(--text-muted);
       border: 1px solid var(--border);
+    }
+
+    .badge-superseded {
+      background: #f5f3ff;
+      color: #6d28d9;
+      border: 1px solid #ddd6fe;
     }
 
     .priority-badge {
@@ -2734,9 +2749,11 @@
 
           if (activeFilter !== 'all' && childTasks.length === 0) return '';
 
-          const settledCount = tasks.filter(t => t.feature_id === f.id && t.status === 'settled').length;
-          const totalFeatureTasks = tasks.filter(t => t.feature_id === f.id).length;
-          const progressPct = totalFeatureTasks > 0 ? Math.round((settledCount / totalFeatureTasks) * 100) : 0;
+          const featureTasks = tasks.filter(t => t.feature_id === f.id);
+          const settledCount = featureTasks.filter(t => t.status === 'settled').length;
+          const supersededCount = featureTasks.filter(t => t.superseded_by_task_id).length;
+          const totalFeatureTasks = featureTasks.length;
+          const progressPct = totalFeatureTasks > 0 ? Math.round(((settledCount + supersededCount) / totalFeatureTasks) * 100) : 0;
 
           return `
             <div class="feature-card">
@@ -2750,7 +2767,7 @@
                 </div>
                 <div style="display: flex; gap: 8px; align-items: center;">
                   ${f.status !== 'settled' ? `<button class="btn-sm" onclick="addTaskToFeature(${actionArg(f.id)})">➕ Task</button>` : ''}
-                  ${f.status !== 'settled' && totalFeatureTasks > 0 && settledCount === totalFeatureTasks ? `<button class="btn-primary btn-sm" ${running ? 'disabled' : ''} onclick="settleFeatureContract(${actionArg(f.id)})">Settle feature</button>` : ''}
+                  ${f.status !== 'settled' && totalFeatureTasks > 0 && settledCount + supersededCount === totalFeatureTasks ? `<button class="btn-primary btn-sm" ${running ? 'disabled' : ''} onclick="settleFeatureContract(${actionArg(f.id)})">Settle feature</button>` : ''}
                   <span class="status-badge badge-${f.status}">${escapeHtml(f.status)}</span>
                 </div>
               </div>
@@ -2767,12 +2784,14 @@
                 <div class="progress-bar-fill" style="width: ${progressPct}%;"></div>
               </div>
               <div class="progress-labels">
-                <span>Progress: ${settledCount} of ${totalFeatureTasks} tasks settled</span>
+                <span>Progress: ${settledCount} settled${supersededCount ? `, ${supersededCount} superseded` : ''} of ${totalFeatureTasks} tasks</span>
                 <span>${progressPct}% Complete</span>
               </div>
 
               <div class="task-list">
                 ${childTasks.length === 0 ? '<div style="color: var(--text-muted); font-size: 11px; padding: 0.5rem 0;">No matching child tasks.</div>' : childTasks.map(t => {
+                  const isSuperseded = Boolean(t.superseded_by_task_id);
+                  const displayStatus = isSuperseded ? 'superseded' : t.status;
                   const gates = Array.isArray(t.required_gates) ? t.required_gates : (typeof t.required_gates === 'string' ? JSON.parse(t.required_gates || '[]') : []);
                   const gatesStr = gates.map(displayCommand).join(' && ');
                   const paths = Array.isArray(t.allowed_paths) ? t.allowed_paths.join(', ') : (t.allowed_paths || '*');
@@ -2789,9 +2808,9 @@
                   const trippedText = fails >= 3 ? '⚡ TRIPPED' : (fails > 0 ? `${fails}/3 Strikes` : 'Safe');
 
                   return `
-                    <div class="task-row status-${t.status}" data-task-id="${escapeHtml(t.id)}">
+                    <div class="task-row status-${displayStatus}" data-task-id="${escapeHtml(t.id)}">
                       <div class="task-status-col">
-                        <span class="status-badge badge-${t.status}">${escapeHtml(t.status)}</span>
+                        <span class="status-badge badge-${displayStatus}">${escapeHtml(displayStatus)}</span>
                       </div>
 
                       <div class="task-main-info">
@@ -2817,13 +2836,15 @@
                           ${paths ? `<span class="meta-tag" title="Path Guard Whitelist"><span class="meta-code">📁 ${escapeHtml(paths)}</span></span>` : ''}
                           ${gatesStr ? `<span class="meta-tag" title="Required Verification Gates"><span class="meta-code">⚙️ ${escapeHtml(gatesStr)}</span></span>` : ''}
                           ${t.settled_commit ? `<span class="meta-tag" title="Settled Commit"><span class="meta-code" style="color: var(--green);">✔ ${escapeHtml(t.settled_commit.slice(0, 7))}</span></span>` : ''}
+                          ${isSuperseded ? `<span class="meta-tag" title="Replacement task"><span class="meta-code">↪ ${escapeHtml(t.superseded_by_task_id)}</span></span>` : ''}
                           ${taskLabels.length > 0 ? taskLabels.map(l => `<span class="label-pill">🏷️ ${escapeHtml(l)}</span>`).join('') : ''}
                         </div>
                       </div>
 
                       <div class="task-actions-col">
                         <button class="btn-sm" onclick="viewTaskLogs(${actionArg(t.id)})">Logs</button>
-                        ${t.status === 'ready' || t.status === 'backlog' || t.status === 'blocked' ? `<button class="btn-primary btn-sm" onclick="openClaimTask(${actionArg(t.id)})">${t.status === 'blocked' ? 'Human takeover' : 'Start task'}</button>` : ''}
+                        ${(t.status === 'ready' || t.status === 'backlog' || t.status === 'blocked') && !isSuperseded ? `<button class="btn-primary btn-sm" onclick="openClaimTask(${actionArg(t.id)})">${t.status === 'blocked' ? 'Human takeover' : 'Start task'}</button>` : ''}
+                        ${(t.status === 'ready' || t.status === 'backlog' || t.status === 'review' || t.status === 'blocked') && !isSuperseded ? `<button class="btn-sm" onclick="supersedeTask(${actionArg(t.id)})">Supersede</button>` : ''}
                         ${t.status === 'in_progress' ? `<button class="btn-sm" onclick="releaseTask(${actionArg(t.id)})">Release</button>` : ''}
                         ${t.status === 'in_progress' && t.worktree_path ? `<button class="btn-primary btn-sm" ${running ? 'disabled' : ''} onclick="verifyTask(${actionArg(t.id)})">${t.verifying ? 'Verifying…' : 'Verify & settle'}</button>` : ''}
                         ${t.worktree_path ? `<button class="btn-sm" onclick="showTaskWorkspace(${actionArg(t.id)})">Workspace</button>` : ''}
@@ -3352,12 +3373,18 @@
       try {
         const feature_id = document.getElementById('task-feat-select').value;
         if (!feature_id) throw new Error('Create an unsettled feature contract before adding a task.');
+        const required_gates = document.getElementById('task-new-gates').value.split('\n').map(g => g.trim()).filter(Boolean).map(gate => {
+          if (/[|&;<>`$'"\\]/.test(gate)) throw new Error('Gate commands use space-separated argv. Shell syntax and quotes are not allowed in the dashboard.');
+          const argv = gate.split(/\s+/).filter(Boolean);
+          if (!argv.length) throw new Error('Each gate must contain a command.');
+          return { type: 'argv', argv };
+        });
         await postAction('/api/tasks', {
           feature_id,
           id: document.getElementById('task-new-id').value.trim(),
           title: document.getElementById('task-new-title').value.trim(),
           allowed_paths: document.getElementById('task-new-paths').value.split(',').map(p => p.trim()).filter(Boolean),
-          required_gates: document.getElementById('task-new-gates').value.split('\n').map(g => g.trim()).filter(Boolean),
+          required_gates,
           assigned_actor: document.getElementById('task-new-actor').value || undefined
         });
         closeModal('new-task-modal');
@@ -3443,6 +3470,15 @@
       if (!await confirmAction('Release this lease? The task returns to ready and its worktree is preserved.')) return;
       try { await postAction('/api/tasks/release', { taskId }); notifyUser('Lease released. Worktree preserved.'); }
       catch (err) { notifyUser(err.message, true); }
+    }
+    async function supersedeTask(taskId) {
+      const replacementTaskId = window.prompt('Enter the settled replacement task ID. This preserves the original task without pretending it was committed.');
+      if (!replacementTaskId || !replacementTaskId.trim()) return;
+      if (!await confirmAction(`Mark ${taskId} as superseded by ${replacementTaskId.trim()}? This cannot be undone.`)) return;
+      try {
+        await postAction('/api/tasks/supersede', { taskId, replacementTaskId: replacementTaskId.trim(), actorName: 'human' });
+        notifyUser(`${taskId} is now superseded by ${replacementTaskId.trim()}.`);
+      } catch (err) { notifyUser(err.message, true); }
     }
 
     async function viewTaskLogs(taskId) {

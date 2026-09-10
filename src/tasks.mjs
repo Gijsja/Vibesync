@@ -195,6 +195,7 @@ export function listTasks(dbOrFilter = getDb(), maybeFilter = {}) {
 export function updateTaskStatus(id, newStatus, actor = null, db = getDb()) {
   const task = getTask(id, db);
   if (!task) throw new Error(`Task ${id} not found.`);
+  if (task.superseded_by_task_id) throw new Error(`Task ${id} is superseded by ${task.superseded_by_task_id} and immutable.`);
   if (newStatus === 'settled') throw new Error('Use verifyAndSettleTask to settle a task after its gates pass.');
   if (task.status === 'settled' || task.status === 'blocked') throw new Error(`Task ${id} is ${task.status}; use its explicit lifecycle action.`);
   if (!TASK_STATUSES.includes(newStatus)) {
@@ -225,7 +226,7 @@ export function updateTask(id, updates, db = getDb()) {
   const task = getTask(id, db);
   if (!task) throw new Error(`Task ${id} not found.`);
 
-  if (task.status === 'settled') throw new Error(`Task ${id} is settled and immutable.`);
+  if (task.status === 'settled' || task.superseded_by_task_id) throw new Error(`Task ${id} is terminal and immutable.`);
   if (updates.status !== undefined) throw new Error('Use explicit task lifecycle actions to change status.');
   if ((updates.allowed_paths !== undefined || updates.required_gates !== undefined) && !['ready', 'backlog'].includes(task.status)) throw new Error('Release the task before editing its scope or gates.');
 
@@ -269,6 +270,41 @@ export function updateTask(id, updates, db = getDb()) {
   db.prepare(`UPDATE tasks SET ${setClauses.join(', ')} WHERE id = ?`).run(...args);
   checkpointState(db);
   return getTask(id, db);
+}
+
+/**
+ * Marks an unleased task as replaced by a settled sibling task. This retains
+ * the original contract and audit history without falsely recording a commit
+ * that never occurred.
+ */
+export function supersedeTask({ taskId, replacementTaskId, actorName }, db = getDb()) {
+  if (!taskId || !replacementTaskId || !actorName) throw new Error('taskId, replacementTaskId, and actorName are required.');
+  if (taskId === replacementTaskId) throw new Error('A task cannot supersede itself.');
+  const task = getTask(taskId, db);
+  const replacement = getTask(replacementTaskId, db);
+  if (!task || !replacement) throw new Error('Both the task and its replacement must exist.');
+  if (task.feature_id !== replacement.feature_id) throw new Error('Replacement task must belong to the same feature.');
+  if (task.status === 'settled' || task.superseded_by_task_id) throw new Error(`Task ${taskId} is already terminal.`);
+  if (task.status === 'in_progress') throw new Error('Release an active task before superseding it.');
+  if (replacement.status !== 'settled') throw new Error(`Replacement task ${replacementTaskId} must be settled first.`);
+
+  db.prepare(`
+    UPDATE tasks
+    SET superseded_by_task_id = ?, superseded_at = CURRENT_TIMESTAMP, superseded_by_actor = ?,
+        assigned_actor = NULL, lease_expires_at = NULL, lease_token_hash = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(replacementTaskId, actorName, taskId);
+  recordSettlementEvent(db, {
+    task_id: taskId,
+    feature_id: task.feature_id,
+    actor: actorName,
+    action: 'task_superseded',
+    commit_ref: replacement.settled_commit || 'HEAD',
+    evidence_payload: { replacement_task_id: replacementTaskId }
+  });
+  checkpointState(db);
+  return getTask(taskId, db);
 }
 
 /**
@@ -365,6 +401,7 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
   if (task.status === 'settled') {
     throw new Error(`Task ${taskId} is already settled.`);
   }
+  if (task.superseded_by_task_id) throw new Error(`Task ${taskId} is superseded by ${task.superseded_by_task_id}.`);
 
   // 2. Rejection on Blocked Task (Circuit Breaker)
   if (task.status === 'blocked' && actorName !== 'human') {
@@ -372,7 +409,10 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
   }
   const labels = typeof task.labels === 'string' ? JSON.parse(task.labels) : (task.labels || []);
   const dependencyIds = labels.filter(label => /^after-TASK-/.test(label)).map(label => label.slice('after-'.length));
-  const unsettled = dependencyIds.filter(id => db.prepare('SELECT status FROM tasks WHERE id = ?').get(id)?.status !== 'settled');
+  const unsettled = dependencyIds.filter(id => {
+    const dependency = db.prepare('SELECT status, superseded_by_task_id FROM tasks WHERE id = ?').get(id);
+    return dependency?.status !== 'settled' && !dependency?.superseded_by_task_id;
+  });
   if (unsettled.length) throw new Error('Task ' + taskId + ' is not ready; settle dependency: ' + unsettled.join(', '));
 
 
@@ -422,6 +462,7 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
     WHERE id = ?
       AND (status != 'in_progress' OR datetime(lease_expires_at) <= datetime('now'))
       AND status != 'settled'
+      AND superseded_by_task_id IS NULL
       AND (status != 'blocked' OR ? = 'human')
   `).run(actorName, actorName, branchName, baseCommit, `+${modelProfile.leaseMinutes} minutes`, leaseTokenHash, leaseRunId, taskId, actorName);
 

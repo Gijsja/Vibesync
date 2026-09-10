@@ -14,7 +14,7 @@ import { beginOperation, listOperations, assertWorkspaceIdle } from './operation
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDb, recordSettlementEvent, readArtifact, checkpointState } from './db.mjs';
-import { listTasks, ejectTaskToHuman, createTask, updateTask, releaseTaskLease, heartbeatTaskLease, checkAndExpireLeases } from './tasks.mjs';
+import { listTasks, ejectTaskToHuman, createTask, updateTask, supersedeTask, releaseTaskLease, heartbeatTaskLease, checkAndExpireLeases } from './tasks.mjs';
 import { listFeatures, createFeature } from './features.mjs';
 import { listIncubatorRecords, parkInsight, execGitWithBackoff, promoteIncubatorItem, discardIncubatorItem, getIncubatorItem, mergeIncubatorItems, promoteMultipleIncubatorItems, getConventions } from './incubator.mjs';
 import {
@@ -648,6 +648,17 @@ export async function startServer(options = {}) {
         broadcastState();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: true }));
+      }
+      if (pathname === '/api/tasks/supersede' && req.method === 'POST') {
+        const body = await readBodyJson(req);
+        const task = supersedeTask({
+          taskId: body.taskId,
+          replacementTaskId: body.replacementTaskId,
+          actorName: body.actorName || 'human'
+        }, db);
+        broadcastState();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: true, task }));
       }
       if (pathname === '/api/incubator/discard' && req.method === 'POST') {
         const body = await readBodyJson(req);

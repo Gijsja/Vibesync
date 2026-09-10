@@ -108,6 +108,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     lease_grace_at DATETIME,
     handoff_requested_at DATETIME,
     lease_run_id TEXT,
+    superseded_by_task_id TEXT REFERENCES tasks(id) ON DELETE RESTRICT,
+    superseded_at DATETIME,
+    superseded_by_actor TEXT,
     model_hint TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -138,7 +141,8 @@ CREATE TABLE IF NOT EXISTS settlement_events (
         'lease_grace',
         'lease_expired',
         'lease_renewed',
-        'lease_handoff_requested'
+        'lease_handoff_requested',
+        'task_superseded'
     )),
     commit_ref TEXT NOT NULL,
     artifact_hash TEXT,
@@ -298,7 +302,8 @@ export function migrateSchema(db) {
               'lease_grace',
               'lease_expired',
               'lease_renewed',
-              'lease_handoff_requested'
+              'lease_handoff_requested',
+              'task_superseded'
           )),
           commit_ref TEXT NOT NULL,
           artifact_hash TEXT,
@@ -342,7 +347,8 @@ export function migrateSchema(db) {
               'lease_grace',
               'lease_expired',
               'lease_renewed',
-              'lease_handoff_requested'
+              'lease_handoff_requested',
+              'task_superseded'
           )),
           commit_ref TEXT NOT NULL,
           artifact_hash TEXT,
@@ -402,6 +408,9 @@ export function migrateSchema(db) {
     if (!taskCols.includes('lease_grace_at')) db.exec('ALTER TABLE tasks ADD COLUMN lease_grace_at DATETIME;');
     if (!taskCols.includes('handoff_requested_at')) db.exec('ALTER TABLE tasks ADD COLUMN handoff_requested_at DATETIME;');
     if (!taskCols.includes('lease_run_id')) db.exec('ALTER TABLE tasks ADD COLUMN lease_run_id TEXT;');
+    if (!taskCols.includes('superseded_by_task_id')) db.exec('ALTER TABLE tasks ADD COLUMN superseded_by_task_id TEXT REFERENCES tasks(id) ON DELETE RESTRICT;');
+    if (!taskCols.includes('superseded_at')) db.exec('ALTER TABLE tasks ADD COLUMN superseded_at DATETIME;');
+    if (!taskCols.includes('superseded_by_actor')) db.exec('ALTER TABLE tasks ADD COLUMN superseded_by_actor TEXT;');
   }
   const approvalCols = db.prepare('PRAGMA table_info(gate_approvals)').all().map(c => c.name);
   if (approvalCols.length && !approvalCols.includes('feature_id')) db.exec('ALTER TABLE gate_approvals ADD COLUMN feature_id TEXT REFERENCES features(id) ON DELETE CASCADE;');
@@ -434,6 +443,39 @@ export function migrateSchema(db) {
   const eventCols = db.prepare('PRAGMA table_info(settlement_events)').all().map(c => c.name);
   if (eventCols.length && !eventCols.includes('lease_run_id')) db.exec('ALTER TABLE settlement_events ADD COLUMN lease_run_id TEXT;');
   if (eventCols.length) db.exec("UPDATE settlement_events SET lease_run_id = json_extract(evidence_payload, '$.lease_run_id') WHERE lease_run_id IS NULL AND json_valid(evidence_payload) AND json_extract(evidence_payload, '$.lease_run_id') IS NOT NULL;");
+
+  const modernEventsDdl = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='settlement_events'").get()?.sql || '';
+  if (modernEventsDdl && !modernEventsDdl.includes("'task_superseded'")) {
+    db.exec(`
+      CREATE TABLE settlement_events_supersession (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id TEXT,
+          feature_id TEXT,
+          actor TEXT NOT NULL,
+          action TEXT NOT NULL CHECK(action IN (
+              'incubator_logged', 'incubator_merged', 'feature_created', 'task_claimed',
+              'gate_failed', 'gate_passed', 'circuit_breaker_tripped', 'task_settled',
+              'feature_settled', 'lease_released', 'ejected_to_human', 'repaired_from_git',
+              'lease_progress', 'lease_warning', 'lease_stagnant', 'lease_grace',
+              'lease_expired', 'lease_renewed', 'lease_handoff_requested', 'task_superseded'
+          )),
+          commit_ref TEXT NOT NULL,
+          artifact_hash TEXT,
+          evidence_payload JSON,
+          lease_run_id TEXT,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+          FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE SET NULL
+      );
+      INSERT INTO settlement_events_supersession (id, task_id, feature_id, actor, action, commit_ref, artifact_hash, evidence_payload, lease_run_id, timestamp)
+        SELECT id, task_id, feature_id, actor, action, commit_ref, artifact_hash, evidence_payload, lease_run_id, timestamp FROM settlement_events;
+      DROP TABLE settlement_events;
+      ALTER TABLE settlement_events_supersession RENAME TO settlement_events;
+      CREATE INDEX IF NOT EXISTS idx_settlement_timestamp ON settlement_events(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_settlement_task ON settlement_events(task_id);
+      CREATE INDEX IF NOT EXISTS idx_settlement_feature ON settlement_events(feature_id);
+    `);
+  }
 }
 
 export function initSchema(db) {
