@@ -24,5 +24,18 @@
     "merged_into_id": null,
     "created_at": "2026-09-10 19:59:44",
     "updated_at": "2026-09-10 19:59:44"
+  },
+  {
+    "id": "INC-007",
+    "title": "Transparent recursive SQLite parameter serialization for JSON columns",
+    "category": "architecture_insight",
+    "target_scope": "src/db.mjs",
+    "context_notes": "Prevent node:sqlite unknown parameter errors by automatically converting object/array column values in prepared statement executions.",
+    "logged_by": "antigravity",
+    "status": "parked",
+    "promoted_feature_id": null,
+    "merged_into_id": null,
+    "created_at": "2026-09-10 19:59:44",
+    "updated_at": "2026-09-10 19:59:44"
   }
 ]
