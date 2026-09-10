@@ -7,7 +7,7 @@ import { execGitWithBackoff } from './incubator.mjs';
 const runtimePath = fileURLToPath(new URL('../scripts/vibesync.mjs', import.meta.url));
 export const bundledDashboardPath = fileURLToPath(new URL('../.vibesync/dashboard.html', import.meta.url));
 const ignores = ['.vibesync/*.db', '.vibesync/*.db-wal', '.vibesync/*.db-shm', '.vibesync/*.log',
-  '.vibesync/hud.url', '.vibesync/artifacts/', '.vibesync/backups/', '.vibesync/worktrees/', '.vibesync_ACTIVE_TASK.md'];
+  '.vibesync/hud.url', '.vibesync/policy.json', '.vibesync/artifacts/', '.vibesync/backups/', '.vibesync/worktrees/', '.vibesync_ACTIVE_TASK.md'];
 
 /** Local exclusions survive stashing an uncommitted .gitignore. */
 export function ensureRuntimeExcludes(repoRoot) {

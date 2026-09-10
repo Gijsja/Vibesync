@@ -26,6 +26,7 @@ test('setup installs a usable empty product and preserves existing workspace con
     const exclude = fs.readFileSync(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'), 'utf8');
     assert.match(exclude, /# VibeSync runtime/);
     assert.match(exclude, /^\.vibesync\/worktrees\/$/m);
+    assert.match(exclude, /^\.vibesync\/policy\.json$/m);
     const db = getDb(null, root);
     assert.equal(db.prepare('SELECT count(*) AS n FROM features').get().n, 0);
     closeDb(db);
