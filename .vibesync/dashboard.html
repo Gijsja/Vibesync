@@ -2585,8 +2585,15 @@
     async function renderWorkflow() {
       const body = document.getElementById('workflow-body');
       if (!body || body.style.display === 'none' || !currentState) return;
+      if (!window.__vibesyncMermaidReady) return;
+      let mermaid;
+      try {
+        mermaid = await window.__vibesyncMermaidReady;
+      } catch {
+        return;
+      }
       const workflow = window.VibeSyncWorkflow;
-      if (!workflow || !window.__vibesyncMermaidReady) return;
+      if (!workflow || !mermaid) return;
       const definition = workflow.buildWorkflowDefinition(currentState, currentTheme);
       if (definition.empty) {
         body.innerHTML = '<div class="workflow-empty">No feature contracts yet. Create a feature to see its live workflow.</div>';
@@ -2594,7 +2601,6 @@
       }
       const sequence = ++workflowRenderSequence;
       try {
-        const mermaid = await window.__vibesyncMermaidReady;
         const compactSource = definition.source.split('\n').map(line => {
           const feature = line.match(/^(?:subgraph GROUP|F)(\d+)\[/);
           if (feature) {
@@ -4913,11 +4919,17 @@
     window.__vibesyncMermaidReady = Promise.all([
       import(`${assetBase}/assets/mermaid/mermaid.esm.min.mjs`),
       import(`${assetBase}/assets/vibesync-workflow.mjs`)
-    ]).then(([mermaidModule]) => {
+    ]).then(([mermaidModule, workflowModule]) => {
       window.__vibesyncMermaid = mermaidModule.default;
+      window.VibeSyncWorkflow = workflowModule;
       window.__vibesyncMermaid.initialize({ startOnLoad: false, securityLevel: 'strict', flowchart: { htmlLabels: false, useMaxWidth: false, curve: 'linear' } });
       window.dispatchEvent(new Event('vibesync-mermaid-ready'));
+      if (typeof renderWorkflow === 'function') renderWorkflow();
       return window.__vibesyncMermaid;
+    }).catch(err => {
+      console.error('[VibeSync workflow] Failed to load Mermaid assets:', err);
+      const body = document.getElementById('workflow-body');
+      if (body) body.innerHTML = '<div class="workflow-error">Live workflow asset loading failed. Feature and task cards remain available below.</div>';
     });
   </script>
 </body>
