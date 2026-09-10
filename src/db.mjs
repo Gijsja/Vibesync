@@ -16,6 +16,43 @@ const { DatabaseSync } = typeof Bun === 'undefined'
 
 export { DatabaseSync };
 
+/**
+ * Safely stringifies a JavaScript object or array for SQLite JSON storage.
+ * Handles strings, objects, arrays, and null/undefined values uniformly.
+ *
+ * @param {any} value
+ * @param {string|null} [fallback=null]
+ * @returns {string|null}
+ */
+export function serializeJsonField(value, fallback = null) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Safely parses a SQLite JSON column into its JavaScript representation.
+ * Handles objects, strings, and malformed JSON with fallback.
+ *
+ * @param {any} value
+ * @param {any} [fallback=null]
+ * @returns {any}
+ */
+export function deserializeJsonField(value, fallback = null) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
 export const SCHEMA_DDL = `
 CREATE TABLE IF NOT EXISTS incubator (
     id TEXT PRIMARY KEY,

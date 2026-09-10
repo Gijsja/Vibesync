@@ -5,7 +5,7 @@
  * Milestone 1: 3-Tier State Engine & Persistence
  */
 
-import { getDb, recordSettlementEvent, checkpointState, saveArtifact } from './db.mjs';
+import { getDb, recordSettlementEvent, checkpointState, saveArtifact, serializeJsonField, deserializeJsonField } from './db.mjs';
 import { execGitWithBackoff } from './incubator.mjs';
 import { FEATURE_STATUSES, PRIORITY_LEVELS } from './config.mjs';
 import { runCommand } from './commands.mjs';
@@ -38,14 +38,10 @@ export function generateNextFeatureId(db = getDb()) {
  */
 export function deserializeFeature(row) {
   if (!row) return null;
-  let holisticGate = row.holistic_gate_cmd;
-  if (typeof holisticGate === 'string' && (holisticGate.startsWith('[') || holisticGate.startsWith('{'))) {
-    try { holisticGate = JSON.parse(holisticGate); } catch {}
-  }
   return {
     ...row,
-    holistic_gate_cmd: holisticGate,
-    labels: typeof row.labels === 'string' ? JSON.parse(row.labels) : (row.labels || [])
+    holistic_gate_cmd: deserializeJsonField(row.holistic_gate_cmd, row.holistic_gate_cmd),
+    labels: deserializeJsonField(row.labels, [])
   };
 }
 
@@ -92,15 +88,15 @@ export function createFeature(params, db = getDb()) {
     throw new Error(`Invalid feature priority: "${priority}". Must be one of: ${PRIORITY_LEVELS.join(', ')}`);
   }
 
-  const labelsJson = Array.isArray(labels) ? JSON.stringify(labels) : (typeof labels === 'string' ? labels : '[]');
+  const labelsJson = serializeJsonField(labels, '[]');
+  const holisticGateJson = serializeJsonField(holistic_gate_cmd, null);
 
   const stmt = db.prepare(`
     INSERT INTO features (id, title, target_milestone, status, priority, labels, external_ref, spec_markdown, holistic_gate_cmd)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  stmt.run(id, title, target_milestone, status, priority, labelsJson, external_ref, spec_markdown,
-    holistic_gate_cmd && typeof holistic_gate_cmd === 'object' ? JSON.stringify(holistic_gate_cmd) : holistic_gate_cmd);
+  stmt.run(id, title, target_milestone, status, priority, labelsJson, external_ref, spec_markdown, holisticGateJson);
 
   recordSettlementEvent(db, {
     feature_id: id,
@@ -207,10 +203,10 @@ export function updateFeature(id, updates, db = getDb()) {
         args.push(value);
       } else if (key === 'labels') {
         setClauses.push(`${key} = ?`);
-        args.push(Array.isArray(value) ? JSON.stringify(value) : value);
+        args.push(serializeJsonField(value, '[]'));
       } else if (key === 'holistic_gate_cmd') {
         setClauses.push(`${key} = ?`);
-        args.push(value && typeof value === 'object' ? JSON.stringify(value) : value);
+        args.push(serializeJsonField(value, null));
       } else {
         setClauses.push(`${key} = ?`);
         args.push(value);

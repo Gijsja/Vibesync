@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { randomUUID } from 'node:crypto';
-import { getDb, recordSettlementEvent, checkpointState } from './db.mjs';
+import { getDb, recordSettlementEvent, checkpointState, serializeJsonField, deserializeJsonField } from './db.mjs';
 import { getFeature } from './features.mjs';
 import { execGitWithBackoff } from './incubator.mjs';
 import { TASK_STATUSES, PRIORITY_LEVELS } from './config.mjs';
@@ -46,10 +46,10 @@ function deserializeTask(row) {
   if (!row) return null;
   const task = {
     ...row,
-    allowed_paths: typeof row.allowed_paths === 'string' ? JSON.parse(row.allowed_paths) : row.allowed_paths,
-    required_gates: typeof row.required_gates === 'string' ? JSON.parse(row.required_gates) : row.required_gates,
-    setup: typeof row.setup === 'string' ? JSON.parse(row.setup) : (row.setup || []),
-    labels: typeof row.labels === 'string' ? JSON.parse(row.labels) : (row.labels || [])
+    allowed_paths: deserializeJsonField(row.allowed_paths, ['*']),
+    required_gates: deserializeJsonField(row.required_gates, []),
+    setup: deserializeJsonField(row.setup, []),
+    labels: deserializeJsonField(row.labels, [])
   };
   delete task.lease_token_hash;
   return task;
@@ -102,10 +102,10 @@ export function createTask(params, db = getDb()) {
     throw new Error(`Invalid task priority: "${priority}". Must be one of: ${PRIORITY_LEVELS.join(', ')}`);
   }
 
-  const allowedPathsJson = Array.isArray(allowed_paths) ? JSON.stringify(allowed_paths) : allowed_paths;
-  const requiredGatesJson = Array.isArray(required_gates) ? JSON.stringify(required_gates) : required_gates;
-  const labelsJson = Array.isArray(labels) ? JSON.stringify(labels) : (typeof labels === 'string' ? labels : '[]');
-  const setupJson = Array.isArray(setup) ? JSON.stringify(setup) : setup;
+  const allowedPathsJson = serializeJsonField(allowed_paths, '["*"]');
+  const requiredGatesJson = serializeJsonField(required_gates, '[]');
+  const labelsJson = serializeJsonField(labels, '[]');
+  const setupJson = serializeJsonField(setup, '[]');
 
   const stmt = db.prepare(`
     INSERT INTO tasks (id, feature_id, title, status, priority, labels, external_ref, allowed_paths, required_gates, setup, max_failures, model_hint)
@@ -254,7 +254,7 @@ export function updateTask(id, updates, db = getDb()) {
         args.push(value);
       } else if (key === 'labels' || key === 'allowed_paths' || key === 'required_gates') {
         setClauses.push(`${key} = ?`);
-        args.push(Array.isArray(value) ? JSON.stringify(value) : value);
+        args.push(serializeJsonField(value, '[]'));
       } else {
         setClauses.push(`${key} = ?`);
         args.push(value);
