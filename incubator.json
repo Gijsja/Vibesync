@@ -13,19 +13,6 @@
     "updated_at": "2026-09-10 10:04:12"
   },
   {
-    "id": "INC-006",
-    "title": "Automate worktree pruning and directory teardown on task settlement",
-    "category": "debt",
-    "target_scope": "src/settle.mjs",
-    "context_notes": "Task settlement currently detaches worktrees but leaves directories and git worktree tracking records until manual pruning. Teardown should remove the directory and prune worktree tracking cleanly.",
-    "logged_by": "antigravity",
-    "status": "parked",
-    "promoted_feature_id": null,
-    "merged_into_id": null,
-    "created_at": "2026-09-10 19:59:44",
-    "updated_at": "2026-09-10 19:59:44"
-  },
-  {
     "id": "INC-007",
     "title": "Transparent recursive SQLite parameter serialization for JSON columns",
     "category": "architecture_insight",
