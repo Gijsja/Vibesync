@@ -15,7 +15,7 @@ import { execGitWithBackoff } from './incubator.mjs';
 import { TASK_STATUSES, PRIORITY_LEVELS } from './config.mjs';
 import { identifyModelProfile } from './policy.mjs';
 import { computeWorkspaceFingerprint } from './fingerprint.mjs';
-import { inspectBaselineReadiness } from './workspace.mjs';
+import { inspectBaselineReadiness, inspectBranchDrift } from './workspace.mjs';
 
 /**
  * Validates task identifier syntax.
@@ -335,6 +335,19 @@ export function hydrateActiveTaskAnchor(worktreePath, task, feature, workspaceSt
     baselineSection = `\n## Repository Baseline Notice\n> **Notice:** ${effectiveBaseline.warning}\n`;
   }
 
+  let driftSection = '';
+  if (worktreePath) {
+    try {
+      const repoRoot = path.resolve(worktreePath, '../../..');
+      if (fs.existsSync(path.join(repoRoot, '.vibesync'))) {
+        const drift = inspectBranchDrift(worktreePath, repoRoot);
+        if (drift && drift.behind_trunk > 0 && drift.warning) {
+          driftSection = `\n## Branch Drift Notice\n> **Notice:** ${drift.warning}\n`;
+        }
+      }
+    } catch {}
+  }
+
   const allowedList = task.allowed_paths && task.allowed_paths.length > 0
     ? task.allowed_paths.map(p => `- \`${p}\``).join('\n')
     : '- `*` (All workspace paths allowed)';
@@ -382,7 +395,7 @@ ${feature?.spec_markdown || 'No feature specification recorded.'}
 
 ## Feature Completion Gate
 ${feature?.holistic_gate_cmd || 'No holistic gate recorded.'}
-${priorStateSection}${baselineSection}
+${priorStateSection}${baselineSection}${driftSection}
 ## Allowed Scopes (Path Whitelist)
 ${allowedList}
 

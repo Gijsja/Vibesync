@@ -14,7 +14,7 @@ import {
 
 import { getDb } from './db.mjs';
 import { beginOperation, assertWorkspaceIdle } from './operations.mjs';
-import { startTask } from './workspace.mjs';
+import { startTask, inspectBranchDrift } from './workspace.mjs';
 import { featureInput, taskInput } from './input.mjs';
 import { claimTask, createTask, releaseTaskLease, heartbeatTaskLease, getTask, listTasks } from './tasks.mjs';
 import { createFeature, getFeature } from './features.mjs';
@@ -112,6 +112,14 @@ function compactPreview(preview) {
     ...(preview.baseline ? {
       baseline_clean: preview.baseline.clean,
       ...(preview.baseline.warning ? { baseline_warning: preview.baseline.warning } : {})
+    } : {}),
+    ...(preview.drift && preview.drift.behind_trunk > 0 ? {
+      drift: {
+        behind_trunk: preview.drift.behind_trunk,
+        ahead_trunk: preview.drift.ahead_trunk,
+        can_merge_cleanly: preview.drift.can_merge_cleanly,
+        ...(preview.drift.warning ? { warning: preview.drift.warning } : {})
+      }
     } : {}),
     next_action: blockedApprovals
       ? 'Request an administrator to approve the listed task commands before claiming.'
@@ -459,11 +467,13 @@ export function createMcpServer(options = {}) {
         const task = listTasks(db, { status: 'in_progress', assigned_actor: args.actor_name })[0] || null;
         if (!task) return { content: [{ type: 'text', text: compactText({ active: false, next_action: 'List ready tasks.' }) }] };
         const expired = db.prepare("SELECT datetime(lease_expires_at) <= datetime('now') AS expired FROM tasks WHERE id = ?").get(task.id)?.expired === 1;
+        const drift = task.worktree_path ? inspectBranchDrift(task.worktree_path, repoRoot) : null;
         return { content: [{ type: 'text', text: compactText({
           active: !expired,
           expired,
           ...taskBrief(task),
           worktree_path: task.worktree_path || null,
+          ...(drift && drift.behind_trunk > 0 ? { drift } : {}),
           lease: {
             expires_at: task.lease_expires_at || null,
             last_heartbeat_at: task.last_heartbeat_at || null,
