@@ -61,7 +61,7 @@ test('prepareSandboxedCommand formats TRUSTED_LOCAL_REQUIRED error with actual a
 
     const spec = resolveCommandSpec({ type: 'argv', argv: ['node', '-e', 'process.exit(0)'] });
     const rogueActor = 'unauthorized-bot';
-    
+
     assert.throws(
       () => prepareSandboxedCommand(spec, sandbox.dir, sandbox.dir, ['*'], { actorName: rogueActor }),
       (err) => {

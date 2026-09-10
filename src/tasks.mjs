@@ -356,7 +356,7 @@ export function hydrateActiveTaskAnchor(worktreePath, task, feature, workspaceSt
 **Labels:** ${labelsText}  
 **External Ref:** ${task.external_ref || 'none'}  
 **Assigned Actor:** ${task.assigned_actor || 'unassigned'}  
-**Lease Generation:** ${task.lease_generation || 1}  
+**Lease Generation:** ${task.lease_generation || 1}
 **Branch:** ${task.branch_name || 'N/A'}  
 **Base Commit:** ${task.base_commit || 'N/A'}  
 **Lease Expires:** ${task.lease_expires_at || 'N/A'}  
