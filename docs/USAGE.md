@@ -8,7 +8,7 @@ themes.
 
 ## Requirements
 
-- Node.js 22.13+ or 24+ (uses built-in SQLite), or Bun 1.3+.
+- Node.js 24+ is recommended and uses built-in SQLite. Node.js 22.13+ remains supported, or use Bun 1.3+ for a Bun-native project. Install one runtime, not both.
 - Git with `merge-tree --write-tree` support.
 
 ## Run from this checkout
@@ -88,9 +88,18 @@ local project. If the command is not found, add `bun pm bin -g` to your shell `P
 Park distractions in the incubator. Promote an idea to a feature when its
 acceptance criteria are ready, or discard it while retaining Git history.
 
-The activity budget panel estimates local VibeSync activity. It is not a live
-provider billing or account quota integration. Provider configuration lives in
-`.vibesync/usage.json`.
+The Usage panel estimates local VibeSync activity and configured request quotas. It
+is not a live provider-token, billing, or account-quota integration unless real
+provider evidence is supplied. Provider configuration lives in `.vibesync/usage.json`.
+
+### Low-token agent setup
+
+Use an on-demand worker MCP connection for the coding agent, and keep the admin
+MCP connection in a separate human-controlled client. The HUD is suitable for
+supervision and does not create a provider-model session. Worker responses are
+compact by default; request `detail: "full"` only when raw contracts, resolved
+policy, or gate evidence is necessary. Do not configure CLI adapters unless you
+intend VibeSync to launch an additional provider session.
 
 ## MCP tools and roles
 
@@ -107,7 +116,8 @@ with the current strike count, exact failure, and forbidden follow-up actions.
 | Tool | Purpose |
 | --- | --- |
 | `vibesync_list_ready_tasks` | Read a compact list of claimable tasks |
-| `vibesync_get_task_detail` | Read one task and its parent feature contract |
+| `vibesync_get_task_detail` | Read an action brief, or the full task and parent feature contract with `detail: "full"` |
+| `vibesync_get_active_task` | Recover the active task brief for an actor without exposing a lease token |
 | `vibesync_claim_task` | Lease a task and provision its worktree when no path is supplied |
 | `vibesync_heartbeat_task` | Renew ownership from server-observed workspace evidence |
 | `vibesync_partial_verify` | Run selected structured, safe gates without settlement |

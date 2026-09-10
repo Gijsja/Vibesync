@@ -32,7 +32,7 @@ subscriptions. Connect your own MCP-capable coding client, or use the dashboard.
 
 You will need Git with `merge-tree --write-tree` support and either **Node.js 22.13+** or **Bun 1.3+**.
 
-Node 24+ remains recommended for Node users. Node 22.13+ is supported but reports Node's experimental SQLite warning.
+**Node 24+ is the primary, recommended runtime.** Bun 1.3+ is a supported alternative for Bun-native projects; you need one runtime, not both. Node 22.13+ is supported but reports Node's experimental SQLite warning.
 
 ```sh
 git clone https://github.com/Gijsja/Vibesync.git
@@ -96,6 +96,12 @@ settle it, and park discoveries. Human administration tools are exposed separate
 with `npm start -- --mcp-role admin`; they create contracts, curate insights,
 settle features, and repair state. See the
 [usage guide](docs/USAGE.md) for details.
+
+For the smallest agent context footprint, connect an agent to the worker MCP server
+only while it is assigned work, keep the administrator MCP server in a human-controlled
+client, and use the HUD for supervision. Worker tool responses are compact by default;
+pass `detail: "full"` only when complete evidence is needed. Leave CLI adapters
+unconfigured unless you explicitly want VibeSync to launch a separate provider session.
 
 Before claiming, workers can call `vibesync_preview_task`. The preview identifies
 the model family from the actor name, reports whether it matches `model_hint`,
@@ -166,8 +172,9 @@ less-trusted projects or models. Scope checks cannot prevent reads or network
 exfiltration without OS containment. Keep the HUD on loopback. Hotfix preview and
 settlement scan changed files for high-confidence secret patterns before commit.
 
-The activity panel estimates local activity, not provider billing or account
-quotas. Recovery restores recorded state; separately back up uncommitted source
+The Usage panel estimates local VibeSync activity and configured request quotas; it
+does not measure provider tokens, billing, or account quotas unless real provider
+evidence has been recorded. Recovery restores recorded state; separately back up uncommitted source
 files and worktrees. See [security notes](SECURITY.md) and
 [recovery instructions](docs/USAGE.md#recovery-and-local-state).
 

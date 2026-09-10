@@ -51,10 +51,85 @@ const TOOL_ROLES = Object.freeze({
   vibesync_route_task: 'admin', vibesync_adapter_status: 'admin',
   vibesync_policy_status: 'admin', vibesync_migrate_policy: 'admin',
   vibesync_get_state: 'admin', vibesync_get_summary: 'admin', vibesync_get_operation: 'admin', vibesync_list_ready_tasks: 'worker', vibesync_get_task_detail: 'worker',
+  vibesync_get_active_task: 'worker',
   vibesync_preview_task: 'worker', vibesync_preview_feature: 'worker', vibesync_claim_task: 'worker', vibesync_heartbeat_task: 'worker',
   vibesync_partial_verify: 'worker',
   vibesync_verify_and_settle: 'worker', vibesync_park_insight: 'worker'
 });
+
+const detailSchema = { type: 'string', enum: ['compact', 'full'], default: 'compact', description: 'Response detail. Compact returns the next-action brief; full returns complete evidence.' };
+const isFullDetail = args => args.detail === 'full';
+const truncate = (value, limit = 1200) => {
+  const text = String(value || '');
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+};
+const compactText = value => JSON.stringify(value);
+const fullText = value => JSON.stringify(value, null, 2);
+const toolText = (value, args) => isFullDetail(args) ? fullText(value) : compactText(value);
+
+function taskBrief(task) {
+  return {
+    task_id: task.id,
+    feature_id: task.feature_id,
+    title: task.title,
+    status: task.status,
+    priority: task.priority,
+    labels: task.labels || [],
+    allowed_paths: task.allowed_paths || [],
+    gate_count: (task.required_gates || []).length,
+    model_hint: task.model_hint || null
+  };
+}
+
+function compactFailure(result) {
+  if (result?.success !== false) return undefined;
+  return {
+    code: result.failure?.code || result.phase || 'VERIFICATION_FAILED',
+    message: truncate(result.failure?.exact_failure || result.failedGate?.summary || result.errorPayload?.failure || result.error, 800),
+    strike_count: result.failure?.strike_count ?? result.consecutiveFailures ?? result.failures ?? null,
+    max_strikes: result.failure?.max_strikes ?? null,
+    artifact_hash: result.artifactHash || null
+  };
+}
+
+function nextActionForTask(task) {
+  if (task.status === 'ready') return 'Preview this task, then claim it when its approvals are ready.';
+  if (task.status === 'in_progress') return 'Continue work in the assigned worktree and heartbeat before the lease expires.';
+  if (task.status === 'blocked') return 'Request administrator intervention before continuing.';
+  return 'Inspect full task detail if additional evidence is needed.';
+}
+
+function compactPreview(preview) {
+  const blockedApprovals = preview.approval_required || 0;
+  return {
+    success: true,
+    ...taskBrief(preview.task),
+    model_profile: preview.model?.id || null,
+    suitability: preview.suitability,
+    gate_count: preview.commands?.length || 0,
+    approval_required: blockedApprovals,
+    estimated_verification_ms: preview.estimated_verification_ms || 0,
+    next_action: blockedApprovals
+      ? 'Request an administrator to approve the listed task commands before claiming.'
+      : 'Claim the task when you are ready to work in its isolated worktree.'
+  };
+}
+
+function compactGateResult(result, action) {
+  const failure = compactFailure(result);
+  return {
+    success: result?.success !== false,
+    task_id: result?.taskId || null,
+    status: result?.status || (result?.settled ? 'settled' : 'in_progress'),
+    phase: result?.phase || null,
+    gate_count: result?.gatesRun?.length || result?.indices?.length || 0,
+    settled: Boolean(result?.settled),
+    ownership_changed: Boolean(result?.ownershipChanged),
+    artifact_hash: result?.artifactHash || null,
+    ...(failure ? { failure } : {}),
+    next_action: failure ? 'Address the reported failure before retrying verification.' : action
+  };
+}
 
 /**
  * Creates and configures the VibeSync MCP Server instance with tool declarations and handlers.
@@ -151,13 +226,18 @@ export function createMcpServer(options = {}) {
       },
       {
         name: 'vibesync_get_task_detail',
-        description: description('Read one task contract and its feature acceptance criteria.', 'A worker is deciding whether to claim or needs its exact constraints.', 'Do not use to mutate task scope or status.', 'Read-only; returns one task and its parent feature.'), annotations: annotations(true, false, true),
-        inputSchema: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] }
+        description: description('Read one task contract and its feature acceptance criteria.', 'A worker is deciding whether to claim or needs its exact constraints.', 'Do not use to mutate task scope or status.', 'Read-only; compact output is action-oriented, while detail=full returns one task and its parent feature.'), annotations: annotations(true, false, true),
+        inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, detail: detailSchema }, required: ['task_id'] }
+      },
+      {
+        name: 'vibesync_get_active_task',
+        description: description('Read the current task leased to an actor without exposing its secret lease token.', 'A worker needs to recover its task context after a restart or context compaction.', 'Do not use to recover or impersonate a lease token; request administrator handoff or release if the token was lost.', 'Read-only; returns one concise active-task brief or an inactive result.'), annotations: annotations(true, false, true),
+        inputSchema: { type: 'object', properties: { actor_name: { type: 'string' } }, required: ['actor_name'] }
       },
       {
         name: 'vibesync_preview_task',
         description: description('Preview cost, commands, approvals, and model suitability before claiming.', 'Any worker is deciding whether it can safely execute a task.', 'Do not treat suitability as authorization.', 'Read-only; resolves command policy hashes against the current checkout.'), annotations: annotations(true, false, true),
-        inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, actor_name: { type: 'string' } }, required: ['task_id', 'actor_name'] }
+        inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, actor_name: { type: 'string' }, detail: detailSchema }, required: ['task_id', 'actor_name'] }
       },
       {
         name: 'vibesync_approve_task_command',
@@ -182,7 +262,8 @@ export function createMcpServer(options = {}) {
           properties: {
             task_id: { type: 'string', description: 'Task ID to claim, e.g. TASK-01.1' },
             actor_name: { type: 'string', description: 'Agent identifier, e.g. gemini-antigravity, openai-codex, or anthropic-claude' },
-            worktree_path: { type: 'string', description: 'Optional existing worktree path. Omit when claiming to provision an isolated task worktree automatically.' }
+            worktree_path: { type: 'string', description: 'Optional existing worktree path. Omit when claiming to provision an isolated task worktree automatically.' },
+            detail: detailSchema
           },
           required: ['task_id', 'actor_name']
         }
@@ -194,7 +275,8 @@ export function createMcpServer(options = {}) {
           task_id: { type: 'string' },
           actor_name: { type: 'string' },
           lease_token: { type: 'string' },
-          worktree_path: { type: 'string', description: 'Optional: path to the task worktree. Server validates it matches the registered path before computing evidence.' }
+          worktree_path: { type: 'string', description: 'Optional: path to the task worktree. Server validates it matches the registered path before computing evidence.' },
+          detail: detailSchema
         }, required: ['task_id', 'actor_name', 'lease_token'] }
       },
       {
@@ -202,7 +284,8 @@ export function createMcpServer(options = {}) {
         description: description('Run safe declared gates without settling the task.', 'A worker wants early feedback during a long lease.', 'Do not use with legacy or non-idempotent gates, or as final settlement.', 'Consumes governed gate capacity and records partial gate runs; ownership and task status are unchanged.'), annotations: annotations(false, false, true),
         inputSchema: { type: 'object', properties: {
           task_id: { type: 'string' }, actor_name: { type: 'string' },
-          indices: { type: 'array', items: { type: 'integer', minimum: 0 }, description: 'Optional declared gate indices; omit to run every safe structured gate.' }
+          indices: { type: 'array', items: { type: 'integer', minimum: 0 }, description: 'Optional declared gate indices; omit to run every safe structured gate.' },
+          detail: detailSchema
         }, required: ['task_id', 'actor_name'] }
       },
       {
@@ -214,6 +297,7 @@ export function createMcpServer(options = {}) {
             task_id: { type: 'string', description: 'Task ID to verify and settle' },
             actor_name: { type: 'string', description: 'Agent identifier' },
             worktree_path: { type: 'string', description: 'Optional path to the agent isolated worktree folder' },
+            detail: detailSchema,
             discovered_insights: {
               type: 'array',
               description: 'Optional insights or technical debt discovered during task execution to park autonomously',
@@ -317,7 +401,7 @@ export function createMcpServer(options = {}) {
 
     try {
       if (!visibleTools.some(tool => tool.name === name)) throw Object.assign(new Error(`Tool ${name} is not available to the ${role} MCP role.`), { code: 'ROLE_FORBIDDEN' });
-      if (!['vibesync_get_state', 'vibesync_get_summary', 'vibesync_get_operation', 'vibesync_list_ready_tasks', 'vibesync_get_task_detail'].includes(name)) assertWorkspaceIdle(db);
+      if (!['vibesync_get_state', 'vibesync_get_summary', 'vibesync_get_operation', 'vibesync_list_ready_tasks', 'vibesync_get_task_detail', 'vibesync_get_active_task'].includes(name)) assertWorkspaceIdle(db);
       if (name === 'vibesync_create_feature' || name === 'vibesync_create_task' || name === 'vibesync_release_task') {
         let result;
         if (name === 'vibesync_create_feature') result = createFeature(featureInput(args), db);
@@ -347,19 +431,48 @@ export function createMcpServer(options = {}) {
 
       if (name === 'vibesync_list_ready_tasks') {
         const tasks = listTasks(db, { status: 'ready', feature_id: args.feature_id }).slice(0, args.limit || 20)
-          .map(({ id, feature_id, title, priority, labels, allowed_paths, required_gates, model_hint }) => ({ id, feature_id, title, priority, labels, allowed_paths, required_gates, model_hint }));
-        return { content: [{ type: 'text', text: JSON.stringify({ tasks, count: tasks.length }, null, 2) }] };
+          .map(task => taskBrief(task));
+        return { content: [{ type: 'text', text: compactText({ tasks, count: tasks.length, next_action: tasks.length ? 'Read task detail or preview a task before claiming it.' : 'No ready tasks are available.' }) }] };
       }
 
       if (name === 'vibesync_get_task_detail') {
         const task = getTask(args.task_id, db);
         if (!task) throw Object.assign(new Error(`Task ${args.task_id} not found.`), { code: 'NOT_FOUND' });
         const feature = getFeature(task.feature_id, db);
-        return { content: [{ type: 'text', text: JSON.stringify({ task, feature }, null, 2) }] };
+        if (isFullDetail(args)) return { content: [{ type: 'text', text: fullText({ task, feature }) }] };
+        const acceptanceCriteria = truncate(feature?.spec_markdown, 1200);
+        return { content: [{ type: 'text', text: compactText({
+          success: true,
+          ...taskBrief(task),
+          feature: feature ? { feature_id: feature.id, title: feature.title, status: feature.status, acceptance_criteria: acceptanceCriteria, acceptance_criteria_truncated: acceptanceCriteria !== String(feature.spec_markdown || '') } : null,
+          next_action: nextActionForTask(task)
+        }) }] };
+      }
+
+      if (name === 'vibesync_get_active_task') {
+        const task = listTasks(db, { status: 'in_progress', assigned_actor: args.actor_name })[0] || null;
+        if (!task) return { content: [{ type: 'text', text: compactText({ active: false, next_action: 'List ready tasks.' }) }] };
+        const expired = db.prepare("SELECT datetime(lease_expires_at) <= datetime('now') AS expired FROM tasks WHERE id = ?").get(task.id)?.expired === 1;
+        return { content: [{ type: 'text', text: compactText({
+          active: !expired,
+          expired,
+          ...taskBrief(task),
+          worktree_path: task.worktree_path || null,
+          lease: {
+            expires_at: task.lease_expires_at || null,
+            last_heartbeat_at: task.last_heartbeat_at || null,
+            lease_run_id: task.lease_run_id || null,
+            token_available: false
+          },
+          next_action: expired
+            ? 'The lease has expired. Do not continue work; list ready tasks or request administrator release/handoff.'
+            : 'Continue work in the assigned worktree. If the lease token was lost, request administrator handoff or release; it cannot be recovered.'
+        }) }] };
       }
 
       if (name === 'vibesync_preview_task') {
-        return { content: [{ type: 'text', text: JSON.stringify(previewTask({ taskId: args.task_id, actorName: args.actor_name }, db, repoRoot), null, 2) }] };
+        const preview = previewTask({ taskId: args.task_id, actorName: args.actor_name }, db, repoRoot);
+        return { content: [{ type: 'text', text: toolText(isFullDetail(args) ? preview : compactPreview(preview), args) }] };
       }
 
       if (name === 'vibesync_approve_task_command') {
@@ -400,7 +513,7 @@ export function createMcpServer(options = {}) {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({
+              text: toolText(isFullDetail(args) ? {
                 success: true,
                 message: `Task ${args.task_id} leased to ${args.actor_name} on branch ${result.task.branch_name}.`,
                 anchor: result.activeTaskAnchorPath,
@@ -409,7 +522,15 @@ export function createMcpServer(options = {}) {
                 heartbeat_minutes: result.heartbeatMinutes,
                 model_profile: result.modelProfile,
                 conventions
-              }, null, 2)
+              } : {
+                success: true,
+                ...taskBrief(result.task),
+                worktree_path: result.task.worktree_path || args.worktree_path || null,
+                anchor: result.activeTaskAnchorPath,
+                lease: { token: result.leaseToken, lease_run_id: result.leaseRunId, expires_at: result.task.lease_expires_at, heartbeat_minutes: result.heartbeatMinutes },
+                model_profile: result.modelProfile,
+                next_action: 'Implement the task in the assigned worktree and heartbeat before the lease expires.'
+              }, args)
             }
           ]
         };
@@ -418,7 +539,15 @@ export function createMcpServer(options = {}) {
       if (name === 'vibesync_heartbeat_task') {
         const result = heartbeatTaskLease({ taskId: args.task_id, actorName: args.actor_name, leaseToken: args.lease_token, worktreePath: args.worktree_path, repoRoot }, db);
         if (onUpdate) onUpdate();
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        const compact = {
+          success: true,
+          ...taskBrief(result.task),
+          lease: { health: result.leaseHealth, expires_at: result.task.lease_expires_at, heartbeat_minutes: result.heartbeatMinutes },
+          fingerprint_changed: result.fingerprintChanged,
+          guidance: result.guidance,
+          next_action: result.leaseHealth === 'active' ? 'Continue implementation and heartbeat again before lease expiry.' : 'Make measurable workspace progress, then heartbeat again.'
+        };
+        return { content: [{ type: 'text', text: toolText(isFullDetail(args) ? result : compact, args) }] };
       }
 
       if (name === 'vibesync_get_lease_rollup') {
@@ -455,7 +584,7 @@ export function createMcpServer(options = {}) {
       if (name === 'vibesync_partial_verify') {
         const result = executePartialVerification({ taskId: args.task_id, actorName: args.actor_name, indices: args.indices ?? null, repoRoot }, db);
         if (onUpdate) onUpdate();
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        return { content: [{ type: 'text', text: toolText(isFullDetail(args) ? result : compactGateResult(result, 'Continue implementation, then run final verification when ready.'), args) }] };
       }
 
       if (name === 'vibesync_verify_and_settle') {
@@ -493,7 +622,7 @@ export function createMcpServer(options = {}) {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2)
+              text: toolText(isFullDetail(args) ? result : compactGateResult(result, 'Task settled. Continue with the next assigned task or feature work.'), args)
             }
           ]
         };

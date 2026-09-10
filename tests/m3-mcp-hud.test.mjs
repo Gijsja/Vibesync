@@ -78,7 +78,7 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
       assert.ok(toolNames.includes('vibesync_merge_insights'));
       assert.ok(toolNames.includes('vibesync_settle_feature'));
       assert.ok(toolNames.includes('vibesync_repair_state'));
-      assert.equal(toolNames.length, 26);
+      assert.equal(toolNames.length, 27);
       assert.ok(toolNames.includes('vibesync_get_summary'));
       assert.ok(toolNames.includes('vibesync_get_operation'));
       assert.ok(toolNames.includes('vibesync_preview_task'));
@@ -97,6 +97,7 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
       assert.ok(toolNames.includes('vibesync_release_task'));
       assert.ok(toolNames.includes('vibesync_list_ready_tasks'));
       assert.ok(toolNames.includes('vibesync_get_task_detail'));
+      assert.ok(toolNames.includes('vibesync_get_active_task'));
       assert.ok(toolNames.includes('vibesync_promote_insight'));
       for (const tool of response.tools) {
         assert.match(tool.description, /Purpose:.*When to use:.*When NOT to use:.*Side effects:/s);
@@ -136,7 +137,7 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
       });
       assert.equal(createdTask.result.id, 'TASK-01.1');
       assert.equal((await invoke('vibesync_list_ready_tasks', {})).count, 1);
-      assert.equal((await invoke('vibesync_get_task_detail', { task_id: 'TASK-01.1' })).feature.id, 'FEAT-01');
+      assert.equal((await invoke('vibesync_get_task_detail', { task_id: 'TASK-01.1', detail: 'full' })).feature.id, 'FEAT-01');
 
       const parked = await invoke('vibesync_park_insight', {
         title: 'Extract renderer', category: 'architecture_insight', target_scope: 'src/render/**',
@@ -198,7 +199,8 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
           arguments: {
             task_id: 'TASK-01.1',
             actor_name: 'gemini-antigravity',
-            worktree_path: sandbox.dir
+            worktree_path: sandbox.dir,
+            detail: 'full'
           }
         }
       });
@@ -260,7 +262,8 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
           name: 'vibesync_claim_task',
           arguments: {
             task_id: 'TASK-02.1',
-            actor_name: 'openai-codex'
+            actor_name: 'openai-codex',
+            detail: 'full'
           }
         }
       });
