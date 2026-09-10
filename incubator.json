@@ -1,15 +1,15 @@
 [
   {
-    "id": "INC-004",
-    "title": "Reclaimed task worktree omits prior uncommitted deliverables",
-    "category": "debt",
-    "target_scope": "workspace provisioning and task recovery",
-    "context_notes": "Product-test baseline after responsible reclaim of TASK-EFF.2: heartbeat succeeded with lease_generation 2, git diff gate passed, but the Bun test gate failed because tests/adapter-output.test.mjs was absent in the managed worktree. Existing EFF.2 implementation had been left uncommitted in the main checkout by the prior actor and was not preserved or surfaced during recovery. Recovery must expose/preserve prior workspace changes or explicitly report that they are unavailable before handing work to a new actor.",
+    "id": "INC-005",
+    "title": "Managed worktree lacks the current source baseline",
+    "category": "speculative_feature",
+    "target_scope": "workspace provisioning and initialization",
+    "context_notes": "Dogfooding FEAT-LOCAL-INIT showed that the claimed worktree is a valid Git checkout at the old base commit, but it lacks the current VibeSync sources because those files are untracked outside the repository Git root. Do not copy or commit the user working tree implicitly. Add an explicit readiness diagnostic and a safe baseline strategy before claiming source-edit tasks.",
     "logged_by": "openai-codex",
     "status": "parked",
     "promoted_feature_id": null,
     "merged_into_id": null,
-    "created_at": "2026-09-09 17:49:33",
-    "updated_at": "2026-09-09 17:49:33"
+    "created_at": "2026-09-10 10:04:12",
+    "updated_at": "2026-09-10 10:04:12"
   }
 ]
