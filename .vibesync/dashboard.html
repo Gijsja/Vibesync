@@ -470,13 +470,14 @@
       font-size: 12px;
       color: var(--text);
       outline: none;
-      width: 230px;
+      width: clamp(240px, 22vw, 340px);
       transition: all 0.15s ease;
     }
 
     .search-input:focus {
       border-color: var(--border-focus);
       box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+      width: clamp(280px, 28vw, 400px);
     }
 
     .visor-toggle-btn {
@@ -2129,7 +2130,7 @@
               </div>
 
               <div class="scratchpad-right-meta">
-                <span class="scratchpad-shortcut-hint" id="scratch-mode-hint">Press <kbd>Tab</kbd> or <kbd>Ctrl+M</kbd> to switch</span>
+                <span class="scratchpad-shortcut-hint" id="scratch-mode-hint">Press <kbd>Ctrl+M</kbd> to switch</span>
               </div>
             </div>
 
@@ -2142,39 +2143,39 @@
             <!-- Smart Auto-Detect Suggestion Notice -->
             <div class="scratchpad-suggestion-bar" id="scratchpad-suggestion" style="display: none;">
               <span>✨ <strong>Smart Detect:</strong> Looks like you're drafting a structured feature contract.</span>
-              <button class="btn-link" onclick="setScratchpadMode('feature')">Switch to Feature Contract Mode (Tab) ➔</button>
+              <button class="btn-link" onclick="setScratchpadMode('feature')">Switch to Feature Contract Mode (Ctrl+M) ➔</button>
             </div>
 
             <!-- Idea Mode Form Fields -->
             <div class="scratchpad-fields" id="fields-idea">
               <div class="scratchpad-row">
-                <input type="text" id="scratch-idea-title" class="scratchpad-input-title" placeholder="💡 What's on your mind? (e.g. Improve task verification feedback)" oninput="detectScratchpadIntent(this.value)" />
-                <select id="scratch-idea-category" class="form-control-sm" title="Idea Category">
+                <input type="text" id="scratch-idea-title" class="scratchpad-input-title" aria-label="Idea title" placeholder="💡 What's on your mind? (e.g. Improve task verification feedback)" oninput="detectScratchpadIntent(this.value)" />
+                <select id="scratch-idea-category" class="form-control-sm" title="Idea Category" aria-label="Idea Category">
                   <option value="speculative_feature">Speculative Feature</option>
                   <option value="architecture_insight">Architecture Insight</option>
                   <option value="debt">Technical Debt</option>
                   <option value="ux_polish">UX Polish</option>
                   <option value="convention">Operational Convention</option>
                 </select>
-                <select id="scratch-idea-actor" class="form-control-sm" title="Logged by">
+                <select id="scratch-idea-actor" class="form-control-sm" title="Logged by" aria-label="Logged by">
                   <option value="human">👤 Human</option>
                   <option value="gemini-antigravity">✨ Gemini</option>
                   <option value="openai-codex">⚡ Codex</option>
                   <option value="anthropic-claude">🟣 Claude</option>
                 </select>
               </div>
-              <textarea id="scratch-idea-notes" class="scratchpad-input-notes" rows="2" placeholder="Context notes, architectural rationale, or observed blockers... (Ctrl+Enter to park)"></textarea>
+              <textarea id="scratch-idea-notes" class="scratchpad-input-notes" rows="2" aria-label="Context notes" placeholder="Context notes, architectural rationale, or observed blockers... (Ctrl+Enter to park)"></textarea>
             </div>
 
             <!-- Feature Mode Form Fields -->
             <div class="scratchpad-fields" id="fields-feature" style="display: none;">
               <div class="scratchpad-row">
-                <input type="text" id="scratch-feat-id" class="scratchpad-input-id" placeholder="FEAT-XX" style="width: 130px;" title="Feature ID" />
-                <input type="text" id="scratch-feat-title" class="scratchpad-input-title" placeholder="🎯 Feature Title: Enduring contract name (e.g. Dialogue Tree Graph Editor)" />
-                <input type="text" id="scratch-feat-milestone" class="scratchpad-input-sm" value="v0.3" placeholder="Milestone" style="width: 95px;" title="Target Milestone" />
-                <input type="text" id="scratch-feat-gate" class="scratchpad-input-sm" value="git diff --check" placeholder="Gate Cmd" style="width: 120px;" title="Holistic Gate Command" />
+                <input type="text" id="scratch-feat-id" class="scratchpad-input-id" placeholder="FEAT-XX" style="width: 130px;" title="Feature ID" aria-label="Feature ID" />
+                <input type="text" id="scratch-feat-title" class="scratchpad-input-title" aria-label="Feature Title" placeholder="🎯 Feature Title: Enduring contract name (e.g. Dialogue Tree Graph Editor)" />
+                <input type="text" id="scratch-feat-milestone" class="scratchpad-input-sm" value="v0.3" placeholder="Milestone" style="width: 95px;" title="Target Milestone" aria-label="Target Milestone" />
+                <input type="text" id="scratch-feat-gate" class="scratchpad-input-sm" value="git diff --check" placeholder="Gate Cmd" style="width: 120px;" title="Holistic Gate Command" aria-label="Holistic Gate Command" />
               </div>
-              <textarea id="scratch-feat-spec" class="scratchpad-input-notes" rows="2" placeholder="Acceptance criteria, boundary constraints, and spec markdown... (Ctrl+Enter to register)"></textarea>
+              <textarea id="scratch-feat-spec" class="scratchpad-input-notes" rows="2" aria-label="Acceptance criteria and specification" placeholder="Acceptance criteria, boundary constraints, and spec markdown... (Ctrl+Enter to register)"></textarea>
             </div>
 
             <!-- Bottom Action & Shortcut Bar -->
@@ -3403,10 +3404,11 @@
       const holistic_gate_cmd = gateEl ? gateEl.value.trim() : 'npm test';
       const spec_markdown = specEl ? specEl.value.trim() : '';
 
-      if (!id || !title) {
-        notifyError('Feature ID and Title are required for trunk contracts');
+      if (!id || !title || !spec_markdown) {
+        notifyError('Feature ID, Title, and Acceptance Criteria are required for trunk contracts');
         if (!id && idEl) idEl.focus();
-        else if (titleEl) titleEl.focus();
+        else if (!title && titleEl) titleEl.focus();
+        else if (specEl) specEl.focus();
         return;
       }
 
