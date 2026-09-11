@@ -206,6 +206,7 @@
       display: inline-flex;
       align-items: center;
       gap: 5px;
+      font-family: inherit;
       font-size: 11px;
       font-weight: 600;
       padding: 2px 8px;
@@ -214,6 +215,22 @@
       border: 1px solid var(--border);
       color: var(--text-muted);
       transition: all 0.15s ease;
+      text-decoration: none;
+    }
+
+    button.agent-indicator {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    button.agent-indicator:hover {
+      filter: brightness(1.12);
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    }
+
+    button.agent-indicator:active {
+      transform: translateY(0);
     }
 
     .agent-indicator.antigravity {
@@ -244,6 +261,36 @@
       color: #b45309;
       background: rgba(217, 119, 6, 0.08);
       border-color: rgba(217, 119, 6, 0.25);
+    }
+
+    [data-theme="dark"] .agent-indicator.antigravity {
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.12);
+      border-color: rgba(56, 189, 248, 0.35);
+    }
+
+    [data-theme="dark"] .agent-indicator.codex {
+      color: #34d399;
+      background: rgba(52, 211, 153, 0.12);
+      border-color: rgba(52, 211, 153, 0.35);
+    }
+
+    [data-theme="dark"] .agent-indicator.claude {
+      color: #c084fc;
+      background: rgba(192, 132, 252, 0.12);
+      border-color: rgba(192, 132, 252, 0.35);
+    }
+
+    [data-theme="dark"] .agent-indicator.deepseek {
+      color: #60a5fa;
+      background: rgba(96, 165, 250, 0.12);
+      border-color: rgba(96, 165, 250, 0.35);
+    }
+
+    [data-theme="dark"] .agent-indicator.human {
+      color: #fbbf24;
+      background: rgba(251, 191, 36, 0.12);
+      border-color: rgba(251, 191, 36, 0.35);
     }
 
     .header-actions {
@@ -476,6 +523,29 @@
       color: var(--accent);
     }
 
+    .active-filter-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: none;
+      letter-spacing: 0;
+      border-radius: 9999px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: var(--accent);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+    .active-filter-pill:hover {
+      background: rgba(56, 189, 248, 0.22);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
     /* Ambient Visor Panels: Pixel Room & Scratchpad */
     .visor-container {
       display: flex;
@@ -586,7 +656,9 @@
     .agent-room-body {
       position: relative;
       width: 100%;
-      height: 145px;
+      aspect-ratio: 920 / 155;
+      height: auto;
+      max-height: 220px;
       background: var(--panel-hover);
       overflow: hidden;
       transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -596,6 +668,8 @@
       width: 100%;
       height: 100%;
       display: block;
+      aspect-ratio: 920 / 155;
+      object-fit: contain;
       image-rendering: pixelated;
       cursor: pointer;
     }
@@ -617,22 +691,29 @@
       z-index: 20;
     }
 
+    .room-speech-bubble::after {
+      content: '';
+      position: absolute;
+      bottom: -5px;
+      left: 50%;
+      transform: translateX(-50%);
+      border-width: 5px 5px 0;
+      border-style: solid;
+      border-color: var(--accent) transparent transparent transparent;
+      display: block;
+      width: 0;
+    }
+
     [data-theme="dark"] .room-speech-bubble {
       background: #1e293b;
       color: #f1f5f9;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7);
     }
 
-    .room-speech-bubble::after {
-      content: '';
-      position: absolute;
-      top: 100%;
-      left: 50%;
-      margin-left: -5px;
-      border-width: 5px;
-      border-style: solid;
+    [data-theme="dark"] .room-speech-bubble::after {
       border-color: var(--accent) transparent transparent transparent;
     }
+
 
     .agent-room-footer {
       display: flex;
@@ -1167,6 +1248,36 @@
       background: #f5f3ff;
       color: #6d28d9;
       border: 1px solid #ddd6fe;
+    }
+
+    [data-theme="dark"] .badge-settled {
+      background: rgba(34, 197, 94, 0.15);
+      color: #4ade80;
+      border: 1px solid rgba(74, 222, 128, 0.3);
+    }
+
+    [data-theme="dark"] .badge-in_progress {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+
+    [data-theme="dark"] .badge-ready {
+      background: rgba(56, 189, 248, 0.15);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+
+    [data-theme="dark"] .badge-blocked {
+      background: rgba(239, 68, 68, 0.18);
+      color: #f87171;
+      border: 1px solid rgba(248, 113, 113, 0.35);
+    }
+
+    [data-theme="dark"] .badge-superseded {
+      background: rgba(192, 132, 252, 0.15);
+      color: #c084fc;
+      border: 1px solid rgba(192, 132, 252, 0.3);
     }
 
     .priority-badge {
@@ -1914,11 +2025,11 @@
       </div>
       <div class="head-pill" id="git-head" title="Current Git HEAD on trunk">HEAD: -</div>
 
-      <div class="agent-strip">
-        <span class="agent-indicator antigravity" title="Google Antigravity / Gemini Agent">✨ Gemini</span>
-        <span class="agent-indicator codex" title="OpenAI Codex GUI Agent">⚡ Codex</span>
-        <span class="agent-indicator claude" title="Anthropic Claude Code Agent">🟣 Claude</span>
-        <span class="agent-indicator human" title="Human Engineer Overseer">👤 Human</span>
+      <div class="agent-strip" role="group" aria-label="Agent Thoughts Inspector">
+        <button type="button" class="agent-indicator antigravity" onclick="openAgentThoughtsModal('team-lead')" title="Inspect Gemini (Team Lead) thoughts & logs" aria-label="Inspect Gemini Team Lead">✨ Gemini</button>
+        <button type="button" class="agent-indicator codex" onclick="openAgentThoughtsModal('implementer')" title="Inspect Codex (Implementer) thoughts & logs" aria-label="Inspect Codex Implementer">⚡ Codex</button>
+        <button type="button" class="agent-indicator claude" onclick="openAgentThoughtsModal('reviewer')" title="Inspect Claude (Reviewer) thoughts & logs" aria-label="Inspect Claude Reviewer">🟣 Claude</button>
+        <button type="button" class="agent-indicator human" onclick="openAgentThoughtsModal('judge')" title="Inspect Human (Judge) thoughts & logs" aria-label="Inspect Human Judge">👤 Human</button>
       </div>
     </div>
 
@@ -1947,7 +2058,7 @@
         </div>
 
         <div class="controls-right">
-          <input type="text" class="search-input" id="search-filter" placeholder="🔍 Search features, tasks, gates... (/ to focus)" oninput="handleSearch(this.value)" />
+          <input type="text" class="search-input" id="search-filter" placeholder="🔍 Search features, tasks, gates... (/ to focus)" aria-label="Search features, tasks, and gates" oninput="handleSearch(this.value)" />
           <button class="visor-toggle-btn active" id="visor-scratch-toggle" onclick="toggleVisor('scratch')">💡 Scratchpad ▾</button>
           <button class="visor-toggle-btn active" id="visor-rig-toggle" onclick="toggleVisor('rig')">🎮 Rig ▾</button>
           <button class="visor-toggle-btn active" id="visor-workflow-toggle" onclick="toggleVisor('workflow')">🗺️ Workflow ▾</button>
@@ -1972,7 +2083,7 @@
               </div>
             </div>
             <div class="agent-room-body" id="room-body">
-              <canvas id="agent-room-canvas" width="920" height="145" class="pixel-canvas"></canvas>
+              <canvas id="agent-room-canvas" width="920" height="155" class="pixel-canvas"></canvas>
               <div class="room-speech-bubble" id="room-speech-bubble"></div>
             </div>
             <div class="agent-room-footer">
@@ -2084,7 +2195,10 @@
 
       <!-- Hero Section: Feature Contracts & Execution Queue -->
       <div class="section-title">
-        <span>Feature Contracts &amp; Execution Queue</span>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span>Feature Contracts &amp; Execution Queue</span>
+          <span id="active-filter-badge" class="active-filter-pill" style="display:none;" onclick="resetAllFilters()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();resetAllFilters();}" title="Click to clear all active filters"></span>
+        </div>
         <span class="section-badge" id="feature-count">0 Features</span>
       </div>
 
@@ -2141,7 +2255,7 @@
     <div class="modal">
       <div class="modal-header">
         <div class="modal-title">💡 Park Off-Task Idea in Incubator</div>
-        <button class="modal-close" onclick="closeModal('park-modal')">&times;</button>
+        <button class="modal-close" aria-label="Close" onclick="closeModal('park-modal')">&times;</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
@@ -2189,7 +2303,7 @@
     <div class="modal">
       <div class="modal-header">
         <div class="modal-title">⚡ Emergency Hotfix Commit</div>
-        <button class="modal-close" onclick="closeModal('hotfix-modal')">&times;</button>
+        <button class="modal-close" aria-label="Close" onclick="closeModal('hotfix-modal')">&times;</button>
       </div>
       <div class="modal-body">
         <div class="warning-callout">
@@ -2213,7 +2327,7 @@
     <div class="modal">
       <div class="modal-header">
         <div class="modal-title">➕ Register New Feature Contract</div>
-        <button class="modal-close" onclick="closeModal('new-feature-modal')">&times;</button>
+        <button class="modal-close" aria-label="Close" onclick="closeModal('new-feature-modal')">&times;</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
@@ -2249,7 +2363,7 @@
     <div class="modal">
       <div class="modal-header">
         <div class="modal-title">➕ Register New Task Execution Unit</div>
-        <button class="modal-close" onclick="closeModal('new-task-modal')">&times;</button>
+        <button class="modal-close" aria-label="Close" onclick="closeModal('new-task-modal')">&times;</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
@@ -2296,12 +2410,12 @@
     <div class="modal" style="width: 700px;">
       <div class="modal-header">
         <div class="modal-title" id="logs-modal-title">📜 Verification Gate Output Logs</div>
-        <button class="modal-close" onclick="closeModal('logs-modal')">&times;</button>
+        <button class="modal-close" aria-label="Close" onclick="closeModal('logs-modal')">&times;</button>
       </div>
       <div class="modal-body">
         <div class="terminal-box" id="terminal-content">Loading logs...</div>
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer" id="logs-modal-footer">
         <button onclick="closeModal('logs-modal')">Close</button>
       </div>
     </div>
@@ -2312,7 +2426,7 @@
     <div class="modal" style="width: 640px;">
       <div class="modal-header">
         <div class="modal-title" id="thought-modal-title">💭 Agent Mind &amp; Thought Stream</div>
-        <button class="modal-close" onclick="closeModal('agent-thoughts-modal')">&times;</button>
+        <button class="modal-close" aria-label="Close" onclick="closeModal('agent-thoughts-modal')">&times;</button>
       </div>
       <div class="modal-body" id="thought-modal-body">
         <!-- Rendered dynamically -->
@@ -2522,6 +2636,41 @@
       renderCurrent();
     }
 
+    async function copyToClipboard(text, successMsg = 'Copied to clipboard!') {
+      if (!text) return;
+      try {
+        if (navigator?.clipboard?.writeText && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else if (document?.createElement) {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        if (typeof notifyUser === 'function') notifyUser(successMsg);
+      } catch (err) {
+        if (typeof notifyUser === 'function') notifyUser('Failed to copy: ' + err.message, true);
+      }
+    }
+    window.copyToClipboard = copyToClipboard;
+
+    function resetAllFilters() {
+      activeFilter = 'all';
+      searchQuery = '';
+      const search = document.getElementById('search-filter');
+      if (search) search.value = '';
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', Boolean(btn.getAttribute('onclick')?.includes("'all'") || btn.textContent.trim() === 'All Tasks'));
+      });
+      renderCurrent();
+    }
+    window.resetAllFilters = resetAllFilters;
+
     function escapeHtml(str) {
       if (!str) return '';
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -2722,6 +2871,31 @@
       const featCountEl = document.getElementById("feature-count");
       if (featCountEl) featCountEl.textContent = `${features.length} Feature${features.length === 1 ? '' : 's'}`;
 
+      // Update active filter badge pill
+      const filterBadge = document.getElementById('active-filter-badge');
+      if (filterBadge) {
+        const filterNames = {
+          antigravity: '✨ Gemini',
+          codex: '⚡ Codex',
+          claude: '🟣 Claude',
+          in_progress: 'In Progress',
+          blocked: '🚨 Blocked / Striking'
+        };
+        const parts = [];
+        if (activeFilter && activeFilter !== 'all') {
+          parts.push(filterNames[activeFilter] || activeFilter);
+        }
+        if (searchQuery) {
+          parts.push(`"${searchQuery}"`);
+        }
+        if (parts.length > 0) {
+          filterBadge.style.display = 'inline-flex';
+          filterBadge.innerHTML = `Filtered: ${escapeHtml(parts.join(' + '))} <span style="margin-left:4px;opacity:0.8;font-weight:bold;">✕ Clear</span>`;
+        } else {
+          filterBadge.style.display = 'none';
+        }
+      }
+
       const featuresRoot = document.getElementById("features-root");
       if (!featuresRoot) return;
 
@@ -2838,8 +3012,8 @@
                             <span class="strikes-text ${fails >= 3 ? 'tripped' : ''}">${trippedText}</span>
                           </span>
 
-                          ${t.branch_name ? `<span class="meta-tag" title="Git Branch"><span class="meta-code">🌿 ${escapeHtml(t.branch_name)}</span></span>` : ''}
-                          ${paths ? `<span class="meta-tag" title="Path Guard Whitelist"><span class="meta-code">📁 ${escapeHtml(paths)}</span></span>` : ''}
+                          ${t.branch_name ? `<span class="meta-tag" title="Git Branch · Click to copy" style="cursor:pointer;" onclick="copyToClipboard(${actionArg(t.branch_name)}, 'Branch name copied!')"><span class="meta-code">🌿 ${escapeHtml(t.branch_name)} 📋</span></span>` : ''}
+                          ${t.worktree_path ? `<span class="meta-tag" title="Worktree Path · Click to copy" style="cursor:pointer;" onclick="copyToClipboard(${actionArg(t.worktree_path)}, 'Worktree path copied!')"><span class="meta-code">📁 ${escapeHtml(t.worktree_path)} 📋</span></span>` : (paths ? `<span class="meta-tag" title="Path Guard Whitelist"><span class="meta-code">📁 ${escapeHtml(paths)}</span></span>` : '')}
                           ${gatesStr ? `<span class="meta-tag" title="Required Verification Gates"><span class="meta-code">⚙️ ${escapeHtml(gatesStr)}</span></span>` : ''}
                           ${t.settled_commit ? `<span class="meta-tag" title="Settled Commit"><span class="meta-code" style="color: var(--green);">✔ ${escapeHtml(t.settled_commit.slice(0, 7))}</span></span>` : ''}
                           ${isSuperseded ? `<span class="meta-tag" title="Replacement task"><span class="meta-code">↪ ${escapeHtml(t.superseded_by_task_id)}</span></span>` : ''}
@@ -2883,7 +3057,7 @@
             <div class="incubator-card" data-id="${escapeHtml(item.id)}">
               <div class="incubator-top">
                 <div style="display:flex; align-items:center; gap:6px;">
-                  <input type="checkbox" class="incubator-checkbox" data-id="${escapeHtml(item.id)}" ${isSelected} onchange="onIncubatorSelectionChange()" style="cursor:pointer;" />
+                  <input type="checkbox" class="incubator-checkbox" data-id="${escapeHtml(item.id)}" ${isSelected} onchange="onIncubatorSelectionChange()" aria-label="Select ${escapeHtml(item.title)} for batch action" style="cursor:pointer;" />
                   <span class="incubator-title">${escapeHtml(item.title)}</span>
                 </div>
                 <span class="incubator-category ${escapeHtml(item.category || '')}">${escapeHtml(item.category || 'speculative_feature')}</span>
@@ -3457,10 +3631,19 @@
       finally { button.disabled = false; }
     }
     function showTaskWorkspace(id) {
-      const task = currentState.tasks.find(t => t.id === id);
+      const task = currentState?.tasks?.find(t => t.id === id);
+      if (!task) return;
       openModal('logs-modal');
       document.getElementById('logs-modal-title').textContent = `Workspace · ${id}`;
-      document.getElementById('terminal-content').textContent = `Work in this isolated directory:\n${task.worktree_path}\n\nBranch: ${task.branch_name}\nActor: ${task.assigned_actor || 'Unassigned'}\nLease expires: ${task.lease_expires_at || 'Released'} UTC\n\nAllowed paths: ${task.allowed_paths.join(', ')}\nRequired gates:\n${task.required_gates.map(displayCommand).join('\n')}\n\nUse the VibeSync verification tool when implementation is ready.`;
+      document.getElementById('terminal-content').textContent = `Work in this isolated directory:\n${task.worktree_path}\n\nBranch: ${task.branch_name}\nActor: ${task.assigned_actor || 'Unassigned'}\nLease expires: ${task.lease_expires_at || 'Released'} UTC\n\nAllowed paths: ${(task.allowed_paths || []).join(', ')}\nRequired gates:\n${(task.required_gates || []).map(displayCommand).join('\n')}\n\nUse the VibeSync verification tool when implementation is ready.`;
+      const footer = document.getElementById('logs-modal-footer');
+      if (footer) {
+        footer.innerHTML = `
+          <button class="btn-primary" onclick="copyToClipboard(${actionArg(task.worktree_path)}, 'Isolated worktree path copied!')">📋 Copy Path</button>
+          <button onclick="copyToClipboard(${actionArg(task.branch_name)}, 'Branch name copied!')">🌿 Copy Branch</button>
+          <button onclick="closeModal('logs-modal')">Close</button>
+        `;
+      }
     }
     async function verifyTask(taskId) {
       if (!await confirmAction('Run the required gates and squash passing changes into trunk? Your task workspace will be committed during settlement.')) return;
@@ -3491,6 +3674,10 @@
       openModal('logs-modal');
       const titleEl = document.getElementById('logs-modal-title');
       const contentEl = document.getElementById('terminal-content');
+      const footer = document.getElementById('logs-modal-footer');
+      if (footer) {
+        footer.innerHTML = `<button onclick="closeModal('logs-modal')">Close</button>`;
+      }
       titleEl.textContent = `📜 Execution & Verification Logs: ${taskId}`;
       contentEl.textContent = 'Fetching gate logs and audit records...';
 
@@ -3701,6 +3888,52 @@
       }
 
       setupInteractivity() {
+        this.hoverKey = null;
+
+        this.canvas.addEventListener('mousemove', (e) => {
+          const rect = this.canvas.getBoundingClientRect();
+          if (!rect || rect.width === 0 || rect.height === 0) return;
+          const scaleX = this.w / rect.width;
+          const scaleY = this.h / rect.height;
+          const mx = (e.clientX - rect.left) * scaleX;
+          const my = (e.clientY - rect.top) * scaleY;
+
+          let isInteractive = false;
+          let hover = null;
+
+          // Check if hovering mining rig
+          if (mx >= this.miningRig.x && mx <= this.miningRig.x + this.miningRig.w &&
+              my >= this.miningRig.y && my <= this.miningRig.y + this.miningRig.h) {
+            isInteractive = true;
+            hover = 'rig';
+          }
+
+          // Check if hovering any agent
+          for (const key in this.agents) {
+            const ag = this.agents[key];
+            const charPos = this.getAgentPos(ag, performance.now() / 1000);
+            if (Math.abs(mx - charPos.x) < 26 && Math.abs(my - (charPos.y - 12)) < 28) {
+              isInteractive = true;
+              hover = key;
+              break;
+            }
+          }
+
+          // Check if hovering lounge
+          if (!hover && mx >= 680 && mx <= 890 && my >= 60 && my <= 135) {
+            isInteractive = true;
+            hover = 'lounge';
+          }
+
+          this.hoverKey = hover;
+          if (this.canvas.style) this.canvas.style.cursor = isInteractive ? 'pointer' : 'default';
+        });
+
+        this.canvas.addEventListener('mouseleave', () => {
+          this.hoverKey = null;
+          if (this.canvas && this.canvas.style) this.canvas.style.cursor = 'default';
+        });
+
         this.canvas.addEventListener('click', (e) => {
           const rect = this.canvas.getBoundingClientRect();
           const scaleX = this.w / rect.width;
@@ -3970,6 +4203,13 @@
         ctx.lineTo(650, 14);
         ctx.stroke();
 
+        // Flowing data fiber light pulses traveling along conduit
+        const fiberPulse1 = ((t * 90) % 860) + 30;
+        const fiberPulse2 = ((t * 90 + 430) % 860) + 30;
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(fiberPulse1, 9, 8, 2);
+        ctx.fillRect(fiberPulse2, 9, 8, 2);
+
         // Floor tiles: Lab Grid (x: 0 to 670)
         ctx.fillStyle = isLight ? '#ffffff' : '#0a0f1d';
         ctx.fillRect(0, 58, 670, this.h - 58);
@@ -4002,6 +4242,16 @@
         ctx.fillRect(682, 68, 226, 76);
         ctx.strokeStyle = isLight ? 'rgba(139, 92, 246, 0.3)' : 'rgba(192, 132, 252, 0.15)';
         ctx.strokeRect(682, 68, 226, 76);
+
+        // Equipment floor drop-shadows for grounding depth
+        const shadowColor = isLight ? 'rgba(15, 23, 42, 0.06)' : 'rgba(0, 0, 0, 0.35)';
+        ctx.fillStyle = shadowColor;
+        ctx.fillRect(22, 132, 144, 4); // Mining rig shadow
+        for (const k in this.agents) {
+          const dx = this.agents[k].deskX;
+          ctx.fillRect(dx + 2, 126, 82, 4); // Workstation shadow
+        }
+        ctx.fillRect(740, 118, 92, 5); // Lounge sofa shadow
       }
 
       drawMiningRig(ctx, t) {
@@ -4009,12 +4259,29 @@
         const x = this.miningRig.x;
         const y = this.miningRig.y;
         const isVerifying = Object.values(this.agents).some(a => a.state === 'verifying');
+        const isHovered = (this.hoverKey === 'rig');
 
         for (let col = 0; col < 2; col++) {
           const rx = x + col * 68;
+
+          // Top cooling exhaust fans with spinning blades
+          for (let fan = 0; fan < 2; fan++) {
+            const fx = rx + 8 + fan * 28;
+            const fy = y - 5;
+            ctx.fillStyle = isLight ? '#cbd5e1' : '#1e293b';
+            ctx.fillRect(fx, fy, 18, 4);
+            const fanAngle = t * (isVerifying ? 36 : 18) + fan;
+            ctx.strokeStyle = (isVerifying || this.pulseIntensity > 0) ? '#38bdf8' : (isLight ? '#94a3b8' : '#334155');
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(fx + 9 - Math.cos(fanAngle) * 6, fy + 2 - Math.sin(fanAngle) * 2);
+            ctx.lineTo(fx + 9 + Math.cos(fanAngle) * 6, fy + 2 + Math.sin(fanAngle) * 2);
+            ctx.stroke();
+          }
+
           ctx.fillStyle = isLight ? '#f8fafc' : '#090d16';
           ctx.fillRect(rx, y, 62, 114);
-          ctx.strokeStyle = (this.pulseIntensity > 0 || isVerifying) ? '#38bdf8' : (isLight ? '#cbd5e1' : '#1e293b');
+          ctx.strokeStyle = (this.pulseIntensity > 0 || isVerifying || isHovered) ? '#38bdf8' : (isLight ? '#cbd5e1' : '#1e293b');
           ctx.lineWidth = 1.5;
           ctx.strokeRect(rx, y, 62, 114);
 
@@ -4063,6 +4330,11 @@
               ctx.fillStyle = isLit ? ledColor : (isLight ? '#cbd5e1' : '#1e293b');
               ctx.fillRect(lx, ly, 3, 3);
             }
+
+            // VU meter dynamic activity strip on rack edge
+            const vuHeight = Math.abs(Math.sin(t * 8 + col * 3 + slot)) * 7;
+            ctx.fillStyle = isVerifying ? '#38bdf8' : '#34d399';
+            ctx.fillRect(rx + 54, sy + 8 - vuHeight, 2, vuHeight);
           }
 
           ctx.fillStyle = isLight ? '#cbd5e1' : '#040711';
@@ -4276,11 +4548,45 @@
           }
           ctx.stroke();
 
+          // Desk RGB Underglow Strip
+          if (isWorking) {
+            ctx.fillStyle = ag.color;
+            ctx.globalAlpha = 0.2 + Math.sin(t * 5) * 0.08;
+            ctx.fillRect(dx + 2, dy + 45, 82, 3);
+            ctx.globalAlpha = 1.0;
+          } else if (isBlocked) {
+            ctx.fillStyle = '#ef4444';
+            ctx.globalAlpha = 0.25;
+            ctx.fillRect(dx + 2, dy + 45, 82, 3);
+            ctx.globalAlpha = 1.0;
+          }
+
           // Keyboard
           ctx.fillStyle = isLight ? '#e2e8f0' : '#0f172a';
           ctx.fillRect(dx + 30, dy + 29, 28, 6);
           ctx.fillStyle = isBlocked ? '#ef4444' : (isWorking ? ag.color : (isLight ? '#94a3b8' : '#334155'));
           ctx.fillRect(dx + 32, dy + 30, 24, 2);
+
+          // Typing spark particles on mechanical keyboard
+          if (isWorking && (ag.role === 'Implementer' || ag.id === 'codex') && Math.sin(t * 14) > 0.82) {
+            ctx.fillStyle = '#6ee7b7';
+            ctx.fillRect(dx + 36 + (Math.sin(t * 22) * 12), dy + 28, 2, 2);
+          }
+
+          // Gold Judge Gavel on Human desk
+          if (ag.role === 'Judge' || ag.id === 'human') {
+            ctx.fillStyle = '#b45309';
+            ctx.fillRect(dx + 12, dy + 31, 8, 3);
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(dx + 15, dy + 27, 4, 10);
+          }
+
+          // Hover indicator outline when agent workstation is hovered
+          if (this.hoverKey === k) {
+            ctx.strokeStyle = ag.color;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(dx - 3, dy - 28, 92, 114);
+          }
         }
       }
 
