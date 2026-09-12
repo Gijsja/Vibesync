@@ -25,8 +25,9 @@ export function isValidFeatureId(id) {
 }
 
 export function generateNextFeatureId(db = getDb()) {
-  const ids = db.prepare("SELECT id FROM features WHERE id LIKE 'FEAT-%'").all();
-  const max = ids.reduce((value, row) => Math.max(value, Number(row.id.match(/^FEAT-(\d+)$/)?.[1] || 0)), 0);
+  // Push MAX calculation and CAST to SQLite for performance (avoids JS regex & large dataset transfer)
+  const row = db.prepare("SELECT MAX(CAST(SUBSTR(id, 6) AS INTEGER)) as maxNum FROM features WHERE id LIKE 'FEAT-%'").get();
+  const max = row?.maxNum || 0;
   return `FEAT-${String(max + 1).padStart(2, '0')}`;
 }
 

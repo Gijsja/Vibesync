@@ -32,8 +32,12 @@ export function generateNextTaskId(featureId, db = getDb()) {
     db.prepare('SELECT COUNT(*) AS count FROM features WHERE created_at <= (SELECT created_at FROM features WHERE id = ?)').get(featureId)?.count || 1
   ).padStart(2, '0');
   const prefix = `TASK-${featureNumber}.`;
-  const rows = db.prepare('SELECT id FROM tasks WHERE id LIKE ?').all(`${prefix}%`);
-  const max = rows.reduce((value, row) => Math.max(value, Number(row.id.slice(prefix.length)) || 0), 0);
+
+  // Push MAX calculation and CAST to SQLite for performance (avoids JS regex & large dataset transfer)
+  const prefixLen = prefix.length;
+  const row = db.prepare('SELECT MAX(CAST(SUBSTR(id, ?) AS INTEGER)) as maxNum FROM tasks WHERE id LIKE ?').get(prefixLen + 1, `${prefix}%`);
+  const max = row?.maxNum || 0;
+
   return `${prefix}${max + 1}`;
 }
 

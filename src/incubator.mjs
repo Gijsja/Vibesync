@@ -170,15 +170,9 @@ export function validateIncubatorStatus(status) {
  * @returns {string} e.g. 'INC-001', 'INC-042'
  */
 export function generateNextIncubatorId(db = getDb()) {
-  const rows = db.prepare("SELECT id FROM incubator WHERE id LIKE 'INC-%'").all();
-  let maxNum = 0;
-  for (const row of rows) {
-    const match = row.id.match(/^INC-(\d+)$/);
-    if (match) {
-      const num = parseInt(match[1], 10);
-      if (num > maxNum) maxNum = num;
-    }
-  }
+  // Push MAX calculation and CAST to SQLite for performance (avoids JS regex & large dataset transfer)
+  const row = db.prepare("SELECT MAX(CAST(SUBSTR(id, 5) AS INTEGER)) as maxNum FROM incubator WHERE id LIKE 'INC-%'").get();
+  const maxNum = row?.maxNum || 0;
   return `INC-${String(maxNum + 1).padStart(3, '0')}`;
 }
 
