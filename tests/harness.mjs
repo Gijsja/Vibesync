@@ -147,6 +147,14 @@ export function initRepo(targetDir, options = {}) {
   // Baseline README
   fs.writeFileSync(path.join(targetDir, "README.md"), "# VibeSync Test Sandbox\n");
 
+  // Pre-create .vibesync directory for runtime state, databases, and policy
+  const vibesyncDir = path.join(targetDir, ".vibesync");
+  fs.mkdirSync(vibesyncDir, { recursive: true });
+
+  if (options.policy) {
+    writePolicy(targetDir, options.policy);
+  }
+
   // Additional files
   if (options.files) {
     for (const [relPath, content] of Object.entries(options.files)) {
@@ -342,6 +350,17 @@ export function isDirty(repoDir) {
   };
 }
 
+export function writePolicy(repoDir, policy) {
+  const vibesyncDir = path.join(repoDir, ".vibesync");
+  fs.mkdirSync(vibesyncDir, { recursive: true });
+  const policyPath = path.join(vibesyncDir, "policy.json");
+  fs.writeFileSync(
+    policyPath,
+    typeof policy === "string" ? policy : JSON.stringify(policy, null, 2) + "\n"
+  );
+  return policyPath;
+}
+
 // ============================================================================
 // 3. Git Sandbox Fixture Class
 // ============================================================================
@@ -363,6 +382,10 @@ export class GitSandbox {
   registerDb(db) {
     this.openDbs.add(db);
     return db;
+  }
+
+  writePolicy(policy) {
+    return writePolicy(this.dir, policy);
   }
 
   registerProcess(proc) {

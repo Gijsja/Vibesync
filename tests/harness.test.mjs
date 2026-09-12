@@ -37,6 +37,7 @@ import {
   removeWorktree,
   isDirty,
   safeRmDir,
+  writePolicy,
   isPortInUse,
   waitForPortFree,
   occupyPort,
@@ -63,6 +64,7 @@ describe("Test Infrastructure Harness Self-Test", () => {
         assert.ok(fs.existsSync(path.join(sandbox.dir, ".git")), ".git directory must exist");
         assert.ok(fs.existsSync(path.join(sandbox.dir, ".gitignore")), ".gitignore must exist");
         assert.ok(fs.existsSync(path.join(sandbox.dir, "README.md")), "README.md must exist");
+        assert.ok(fs.existsSync(path.join(sandbox.dir, ".vibesync")), ".vibesync directory must exist");
 
         const headSha = sandbox.getHeadSha();
         assert.strictEqual(typeof headSha, "string");
@@ -79,6 +81,28 @@ describe("Test Infrastructure Harness Self-Test", () => {
         sandbox.cleanup();
         assert.strictEqual(fs.existsSync(sandbox.dir), false, "Sandbox dir must be removed after cleanup");
       }
+    });
+
+    test("creates .vibesync directory and supports options.policy and writePolicy", async () => {
+      await withSandbox(async (sandbox) => {
+        const vibesyncDir = path.join(sandbox.dir, ".vibesync");
+        assert.ok(fs.existsSync(vibesyncDir), ".vibesync directory must be pre-created");
+        assert.strictEqual(fs.existsSync(path.join(vibesyncDir, "policy.json")), false, "policy.json must not exist by default");
+
+        const policyPath = sandbox.writePolicy({ approval_mode: "enforce", sandbox_mode: "process" });
+        assert.strictEqual(policyPath, path.join(vibesyncDir, "policy.json"));
+        assert.ok(fs.existsSync(policyPath), "policy.json must exist after writePolicy");
+        const loaded = JSON.parse(fs.readFileSync(policyPath, "utf8"));
+        assert.strictEqual(loaded.approval_mode, "enforce");
+        assert.strictEqual(loaded.sandbox_mode, "process");
+      });
+
+      await withSandbox(async (sandbox) => {
+        const policyPath = path.join(sandbox.dir, ".vibesync", "policy.json");
+        assert.ok(fs.existsSync(policyPath), "policy.json must exist when options.policy is provided");
+        const loaded = JSON.parse(fs.readFileSync(policyPath, "utf8"));
+        assert.strictEqual(loaded.version, 2);
+      }, { policy: { version: 2, approval_mode: "enforce" } });
     });
 
     test("withSandbox automatically cleans up after callback execution", async () => {
