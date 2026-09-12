@@ -9,7 +9,9 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
-  ListToolsRequestSchema
+  ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { getDb } from './db.mjs';
@@ -144,6 +146,38 @@ function compactGateResult(result, action) {
   };
 }
 
+export const PROMPT_DEFINITIONS = [
+  {
+    name: 'vibesync_claim_and_start_task',
+    description: 'Step-by-step guidance to discover, inspect, and claim an available VibeSync task in an isolated worktree.',
+    arguments: [
+      { name: 'task_id', description: 'Specific task ID to claim (e.g. TASK-01). If omitted, guides ready task selection.', required: false },
+      { name: 'actor_name', description: 'Agent identifier claiming the task (e.g. gemini-coder).', required: false }
+    ]
+  },
+  {
+    name: 'vibesync_pre_settlement_audit',
+    description: 'Pre-flight self-audit checklist before invoking vibesync_verify_and_settle.',
+    arguments: [
+      { name: 'task_id', description: 'Task ID undergoing settlement.', required: true }
+    ]
+  },
+  {
+    name: 'vibesync_triage_circuit_breaker',
+    description: 'Forensic failure diagnosis when a task encounters gate rejections or trips the circuit breaker.',
+    arguments: [
+      { name: 'task_id', description: 'Failed or blocked task ID.', required: true }
+    ]
+  },
+  {
+    name: 'vibesync_park_insight',
+    description: 'Instruction on parking out-of-scope discoveries into the incubator without polluting trunk.',
+    arguments: [
+      { name: 'discovery_summary', description: 'Brief summary of the discovered technical debt or idea.', required: false }
+    ]
+  }
+];
+
 /**
  * Creates and configures the VibeSync MCP Server instance with tool declarations and handlers.
  * 
@@ -161,7 +195,7 @@ export function createMcpServer(options = {}) {
 
   const server = new Server(
     { name: 'vibesync', version: '0.5.0' },
-    { capabilities: { tools: {} } }
+    { capabilities: { tools: {}, prompts: {} } }
   );
 
   // 1. Tool Declarations
@@ -407,6 +441,119 @@ export function createMcpServer(options = {}) {
   ];
   const visibleTools = role === 'all' ? tools : tools.filter(tool => TOOL_ROLES[tool.name] === role);
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: visibleTools }));
+
+  // 1b. Prompt Request Handlers
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: PROMPT_DEFINITIONS }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+    const { name, arguments: args = {} } = req.params;
+    const def = PROMPT_DEFINITIONS.find(p => p.name === name);
+    if (!def) {
+      throw Object.assign(new Error(`Prompt ${name} not found.`), { code: 'PROMPT_NOT_FOUND' });
+    }
+
+    if (name === 'vibesync_claim_and_start_task') {
+      const targetId = args.task_id;
+      let taskInfo = '';
+      if (targetId) {
+        const task = getTask(targetId, db);
+        if (task) {
+          const gatesCount = Array.isArray(task.required_gates) ? task.required_gates.length : 0;
+          taskInfo = `Target Task: ${task.id} - ${task.title}\nStatus: ${task.status}\nAllowed Scopes: ${(task.allowed_paths || []).join(', ') || '*'}\nRequired Gates: ${gatesCount} gate(s)\n`;
+        }
+      } else {
+        const readyTasks = listTasks('ready', db) || [];
+        taskInfo = `Currently Ready Tasks: ${readyTasks.length > 0 ? readyTasks.map(t => `${t.id} ("${t.title}")`).join(', ') : 'None ready'}\n`;
+      }
+      const text = `# VibeSync Workflow: Claim and Start Task\n\n` +
+        `${taskInfo}\n` +
+        `Follow this operational protocol:\n` +
+        `1. Call \`vibesync_preview_task({ taskId: "${targetId || '<TASK_ID>'}", actorName: "${args.actor_name || 'agent'}" })\` to inspect resolved commands, model guidance, and approvals.\n` +
+        `2. Claim the task with \`vibesync_claim_task({ taskId: "${targetId || '<TASK_ID>'}", actorName: "${args.actor_name || 'agent'}" })\` to provision the isolated worktree and acquire your private lease token.\n` +
+        `3. Change working directory exclusively into the returned \`worktree_path\` (\`.vibesync/worktrees/<task-branch>\`).\n` +
+        `4. Inspect \`.vibesync_ACTIVE_TASK.md\` in the worktree root for contract details, baseline readiness, and critical invariants.\n` +
+        `5. Keep code modifications strictly within \`allowed_paths\`.\n` +
+        `6. Renew your lease regularly using \`vibesync_heartbeat_task\`.\n`;
+      return {
+        description: 'Guidance to claim and start a VibeSync task.',
+        messages: [{ role: 'user', content: { type: 'text', text } }]
+      };
+    }
+
+    if (name === 'vibesync_pre_settlement_audit') {
+      const taskId = args.task_id;
+      if (!taskId) throw new Error('Missing required argument: task_id');
+      const task = getTask(taskId, db);
+      if (!task) throw new Error(`Task ${taskId} not found.`);
+      const gatesCount = Array.isArray(task.required_gates) ? task.required_gates.length : 0;
+      const text = `# VibeSync Pre-Settlement Audit Checklist for ${task.id}\n\n` +
+        `Task: ${task.title}\n` +
+        `Status: ${task.status}\n` +
+        `Allowed Scopes: ${(task.allowed_paths || []).join(', ') || '*'}\n` +
+        `Required Gates: ${gatesCount} gate(s)\n\n` +
+        `Execute this pre-flight verification before settling:\n` +
+        `1. **Worktree Cleanliness:** Run \`git status\` inside \`${task.worktree_path || '.vibesync/worktrees/' + task.id}\` to verify that modified files match only \`allowed_paths\`.\n` +
+        `2. **Partial Verification:** Call \`vibesync_partial_verify\` with your lease token for early gate feedback on safe idempotent checks.\n` +
+        `3. **Commit Quality:** Prepare a clear squash commit message describing the feature changes and citing any resolved issues.\n` +
+        `4. **Final Settlement:** Call \`vibesync_verify_and_settle({ taskId: "${task.id}", actorName: "${task.assigned_actor || 'agent'}", leaseToken: "<LEASE_TOKEN>", commitMessage: "..." })\`.\n` +
+        `5. **Halt on Failure:** If settlement fails, do NOT blindly retry. Read the gate failure output and fix root causes.\n`;
+      return {
+        description: `Pre-settlement audit checklist for ${task.id}.`,
+        messages: [{ role: 'user', content: { type: 'text', text } }]
+      };
+    }
+
+    if (name === 'vibesync_triage_circuit_breaker') {
+      const taskId = args.task_id;
+      if (!taskId) throw new Error('Missing required argument: task_id');
+      const task = getTask(taskId, db);
+      if (!task) throw new Error(`Task ${taskId} not found.`);
+      const gateRuns = db.prepare(`
+        SELECT phase, gate_index, status, exit_code, duration_ms, summary, started_at
+        FROM gate_runs
+        WHERE task_id = ?
+        ORDER BY started_at DESC
+        LIMIT 3
+      `).all(taskId) || [];
+      
+      const text = `# VibeSync Circuit Breaker & Failure Triage for ${task.id}\n\n` +
+        `Task: ${task.title}\n` +
+        `Status: ${task.status} (${task.consecutive_failures || 0}/${task.max_failures || 3} failure strikes)\n` +
+        `Assigned Actor: ${task.assigned_actor || 'unassigned'}\n\n` +
+        `## Recent Gate Execution History\n` +
+        (gateRuns.length > 0
+          ? gateRuns.map(r => `- [${r.status.toUpperCase()}] Phase: \`${r.phase}\`, Exit: ${r.exit_code ?? 'unknown'}, Summary: ${r.summary || 'none'}`).join('\n')
+          : 'No gate runs recorded.') +
+        `\n\n## Triage Protocol:\n` +
+        (task.status === 'blocked'
+          ? `🚨 **TASK IS BLOCKED**: The 3-strike circuit breaker has tripped.\n` +
+            `- Stop automated loops immediately to prevent token burn.\n` +
+            `- Request human takeover or run \`vibesync --eject ${task.id}\` to reset the breaker with a fresh lease.\n`
+          : `⚠️ **STRIKES RECORDED**: Task has ${task.consecutive_failures || 0} failure(s). 3 consecutive failures will lock the task.\n` +
+            `- Reproduce the failing gate command manually inside the worktree.\n` +
+            `- Check failure logs in \`.vibesync/artifacts/\`.\n` +
+            `- Use \`vibesync_partial_verify\` to test your fix before calling full settlement.\n`);
+      return {
+        description: `Failure triage diagnostic for ${task.id}.`,
+        messages: [{ role: 'user', content: { type: 'text', text } }]
+      };
+    }
+
+    if (name === 'vibesync_park_insight') {
+      const discovery = args.discovery_summary || '<BRIEF_SUMMARY>';
+      const text = `# VibeSync Incubator: Parking Discoveries\n\n` +
+        `Discovery: ${discovery}\n\n` +
+        `When encountering off-task opportunities (refactoring, speculative features, architectural debt, or conventions):\n` +
+        `1. Do NOT expand the scope of your active task branch.\n` +
+        `2. Call \`vibesync_park_insight({ title: "${discovery}", category: "debt"|"architecture_insight"|"speculative_feature", context_notes: "...", actor_name: "..." })\`.\n` +
+        `3. VibeSync will mirror your discovery to the orphan \`vibesync/incubator\` git branch with zero footprint on trunk or active worktrees.\n` +
+        `4. Resume focus on your primary task contract.\n`;
+      return {
+        description: 'Guidance on parking insights to the incubator.',
+        messages: [{ role: 'user', content: { type: 'text', text } }]
+      };
+    }
+  });
 
   // 2. Tool Request Handler
   server.setRequestHandler(CallToolRequestSchema, async (req) => {

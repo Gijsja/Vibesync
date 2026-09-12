@@ -316,7 +316,7 @@ export function supersedeTask({ taskId, replacementTaskId, actorName }, db = get
  * @param {object} feature 
  * @returns {string|null} Path to generated anchor file
  */
-export function hydrateActiveTaskAnchor(worktreePath, task, feature, workspaceStatus = null, baseline = null) {
+export function hydrateActiveTaskAnchor(worktreePath, task, feature, workspaceStatus = null, baseline = null, db = null) {
   if (!worktreePath) return null;
   fs.mkdirSync(worktreePath, { recursive: true });
 
@@ -348,16 +348,22 @@ export function hydrateActiveTaskAnchor(worktreePath, task, feature, workspaceSt
     } catch {}
   }
 
-  const allowedList = task.allowed_paths && task.allowed_paths.length > 0
-    ? task.allowed_paths.map(p => `- \`${p}\``).join('\n')
+  const rawAllowed = task.allowed_paths;
+  const allowedArr = Array.isArray(rawAllowed) ? rawAllowed : (typeof rawAllowed === 'string' ? JSON.parse(rawAllowed || '[]') : []);
+  const allowedList = allowedArr.length > 0
+    ? allowedArr.map(p => `- \`${p}\``).join('\n')
     : '- `*` (All workspace paths allowed)';
 
-  const gatesList = task.required_gates && task.required_gates.length > 0
-    ? task.required_gates.map(g => `- \`${typeof g === 'string' ? g : JSON.stringify(g)}\``).join('\n')
+  const rawGates = task.required_gates;
+  const gatesArr = Array.isArray(rawGates) ? rawGates : (typeof rawGates === 'string' ? JSON.parse(rawGates || '[]') : []);
+  const gatesList = gatesArr.length > 0
+    ? gatesArr.map(g => `- \`${typeof g === 'string' ? g : JSON.stringify(g)}\``).join('\n')
     : '- None (Immediate settlement allowed)';
 
-  const labelsText = Array.isArray(task.labels) && task.labels.length > 0
-    ? task.labels.join(', ')
+  const rawLabels = task.labels;
+  const labelsArr = Array.isArray(rawLabels) ? rawLabels : (typeof rawLabels === 'string' ? JSON.parse(rawLabels || '[]') : []);
+  const labelsText = labelsArr.length > 0
+    ? labelsArr.join(', ')
     : 'none';
 
   let priorStateSection = '';
@@ -375,6 +381,57 @@ export function hydrateActiveTaskAnchor(worktreePath, task, feature, workspaceSt
       }
       priorStateSection = `\n## Prior Workspace State (Generation ${task.lease_generation || 1})\n${items.join('\n')}\n`;
     }
+  }
+
+  let failureTriageSection = '';
+  if (task.consecutive_failures > 0 || task.status === 'blocked') {
+    try {
+      const activeDb = db || getDb();
+      const lastFailedRun = activeDb.prepare(`
+        SELECT phase, gate_index, status, exit_code, duration_ms, summary, started_at
+        FROM gate_runs
+        WHERE task_id = ? AND status = 'failed'
+        ORDER BY started_at DESC
+        LIMIT 1
+      `).get(task.id);
+      const strikes = task.consecutive_failures || 0;
+      const maxStrikes = task.max_failures || 3;
+      const warning = task.status === 'blocked'
+        ? `⚠️ **Circuit Breaker Tripped:** Task is blocked after ${strikes}/${maxStrikes} consecutive failures. Human intervention or 'vibesync --eject ${task.id}' is required.`
+        : `⚠️ **Verification Failure Warning:** Strike ${strikes}/${maxStrikes}. Three consecutive failures trip the circuit breaker and lock the task.`;
+      
+      const details = lastFailedRun
+        ? `- **Failed Phase:** \`${lastFailedRun.phase}\` (Gate #${(lastFailedRun.gate_index ?? 0) + 1})\n` +
+          `- **Exit Code:** ${lastFailedRun.exit_code ?? 'non-zero'}\n` +
+          `- **Summary:** ${lastFailedRun.summary || 'Command returned non-zero exit status'}`
+        : `- **Failures:** ${strikes} consecutive failure(s) recorded.`;
+
+      failureTriageSection = `\n## ⚠️ Verification Failure Triage\n` +
+        `> ${warning}\n\n` +
+        `${details}\n\n` +
+        `**Remediation Guidance:**\n` +
+        `1. Inspect recent failure output in terminal logs or check \`.vibesync/artifacts/\`.\n` +
+        `2. Test fixes locally with \`vibesync_partial_verify\` before attempting full settlement.\n` +
+        `3. Do not attempt blind repeat settlements without addressing the failure root cause.\n`;
+    } catch {}
+  }
+
+  const profile = identifyModelProfile(task.assigned_actor || '');
+  let modelGuidanceSection = '';
+  if (profile.id === 'local') {
+    modelGuidanceSection = `\n## Operational Guidance (Local Model)\n` +
+      `- Keep modifications strictly within allowed scopes.\n` +
+      `- Call \`vibesync_heartbeat_task\` every 3 minutes with your private lease token to prevent lease loss.\n` +
+      `- Use \`vibesync_partial_verify\` for early single-gate feedback before final settlement.\n`;
+  } else if (profile.id === 'claude' || profile.id === 'gemini') {
+    modelGuidanceSection = `\n## Operational Guidance (High-Context Reasoning)\n` +
+      `- Adhere strictly to the parent feature acceptance criteria and path containment boundaries.\n` +
+      `- Anticipate edge cases and run idempotent checks via partial verification before full squash merge.\n` +
+      `- If off-task discoveries or architectural debt are uncovered, park them using \`vibesync_park_insight\`.\n`;
+  } else if (profile.id === 'codex') {
+    modelGuidanceSection = `\n## Operational Guidance (Implementation & Test)\n` +
+      `- Focus implementation strictly on satisfying the mandatory verification gates.\n` +
+      `- Verify test pass locally before invoking \`vibesync_verify_and_settle\`.\n`;
   }
 
   const content = `# ACTIVE TASK: ${task.id} - ${task.title}
@@ -395,7 +452,7 @@ ${feature?.spec_markdown || 'No feature specification recorded.'}
 
 ## Feature Completion Gate
 ${feature?.holistic_gate_cmd || 'No holistic gate recorded.'}
-${priorStateSection}${baselineSection}${driftSection}
+${priorStateSection}${failureTriageSection}${modelGuidanceSection}${baselineSection}${driftSection}
 ## Allowed Scopes (Path Whitelist)
 ${allowedList}
 
@@ -523,7 +580,7 @@ export function claimTask(params, db = getDb(), repoRoot = process.cwd()) {
   let activeTaskAnchorPath = null;
   if (worktreePath) {
     const feature = getFeature(task.feature_id, db);
-    activeTaskAnchorPath = hydrateActiveTaskAnchor(worktreePath, updatedTask, feature);
+    activeTaskAnchorPath = hydrateActiveTaskAnchor(worktreePath, updatedTask, feature, null, null, db);
   }
 
   // 7. Audit Ledger Event
