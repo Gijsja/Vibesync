@@ -28,9 +28,12 @@ import { previewTask, previewFeature } from './policy.mjs';
 import { scanSecretEntries } from './secrets.mjs';
 import { cleanAbandonedGateSlots } from './scheduler.mjs';
 import { buildLeaseRollup, listLeaseRollups } from './audit.mjs';
+import { computeAgentTelemetry, computeAttentionQueue } from './telemetry.mjs';
+import { generateHandoffCard, performHumanTakeover } from './handoff.mjs';
 
 const mermaidAssetsRoot = fileURLToPath(new URL('./assets/mermaid', import.meta.url));
 const workflowAssetPath = fileURLToPath(new URL('./workflow.mjs', import.meta.url));
+const hudAssetsRoot = fileURLToPath(new URL('./hud', import.meta.url));
 
 function scanChangedWorkspaceSecrets(repoRoot) {
   const files = execGitWithBackoff(['ls-files', '-m', '-o', '--exclude-standard', '-z'], { cwd: repoRoot, raw: true }).split('\0').filter(Boolean);
@@ -53,7 +56,7 @@ function scanChangedWorkspaceSecrets(repoRoot) {
  * @param {Array} [events=[]]
  * @returns {Array<object>}
  */
-export function synthesizeAgents(tasks = [], providers = [], events = []) {
+export function synthesizeAgents(tasks = [], providers = [], events = [], db = null, repoRoot = process.cwd()) {
   const roleDefs = [
     {
       id: 'team-lead',
@@ -172,6 +175,18 @@ export function synthesizeAgents(tasks = [], providers = [], events = []) {
       externalRef: t.external_ref || null,
       consecutiveFailures: Number(t.consecutive_failures) || 0
     };
+
+    ag.telemetry = db ? computeAgentTelemetry(t, db, repoRoot) : {
+      confidence: isBlocked ? 'low' : (isWorking ? 'high' : 'medium'),
+      evidence: isBlocked ? 'Circuit breaker tripped.' : (isWorking ? 'Active worktree lease.' : 'Awaiting assignment.'),
+      uncertainty: isBlocked ? 'Requires human intervention.' : 'None.'
+    };
+
+    ag.dialogue = [
+      `🎯 ${ag.telemetry.evidence}`,
+      `⚡ Confidence: ${ag.telemetry.confidence.toUpperCase()} | Risk: ${ag.telemetry.uncertainty}`,
+      `👉 ${isBlocked ? 'Circuit breaker tripped! Take over: vibesync --eject ' + t.id : 'Active branch: ' + ag.activeTask.branch}`
+    ];
   }
 
   const provList = Array.isArray(providers) ? providers : Object.values(providers || {});
@@ -217,8 +232,9 @@ export function getPayload(db = getDb(), repoRoot = process.cwd()) {
   `).all() || [];
   const featureEfficiency = Object.fromEntries(features.map(feature => [feature.id, computeFeatureEfficiency(feature.id, db)]));
 
-  const agents = synthesizeAgents(tasks, providers, events);
+  const agents = synthesizeAgents(tasks, providers, events, db, repoRoot);
   const conventions = getConventions(db) || [];
+  const attentionQueue = computeAttentionQueue(db, repoRoot);
 
   return {
     gitHead,
@@ -234,7 +250,8 @@ export function getPayload(db = getDb(), repoRoot = process.cwd()) {
     gateApprovals,
     leaseRollups,
     providers,
-    agents
+    agents,
+    attentionQueue
   };
 }
 
@@ -410,6 +427,22 @@ export async function startServer(options = {}) {
         return fs.createReadStream(realCandidate).pipe(res);
       }
 
+      if (pathname.startsWith('/assets/hud/') && req.method === 'GET') {
+        let relativePath;
+        try { relativePath = decodeURIComponent(pathname.slice('/assets/hud/'.length)); } catch { throw requestError(404, 'Asset not found'); }
+        if (!relativePath || relativePath.includes('\0') || path.isAbsolute(relativePath)) throw requestError(404, 'Asset not found');
+        const allowedExts = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8' };
+        const ext = path.extname(relativePath).toLowerCase();
+        if (!allowedExts[ext]) throw requestError(404, 'Asset not found');
+        const candidate = path.resolve(hudAssetsRoot, relativePath);
+        const root = fs.realpathSync(hudAssetsRoot);
+        let realCandidate;
+        try { realCandidate = fs.realpathSync(candidate); } catch { throw requestError(404, 'Asset not found'); }
+        if (!realCandidate.startsWith(root + path.sep) || !fs.statSync(realCandidate).isFile()) throw requestError(404, 'Asset not found');
+        res.writeHead(200, { 'Content-Type': allowedExts[ext] });
+        return fs.createReadStream(realCandidate).pipe(res);
+      }
+
       // 1. Static Dashboard serving
       if ((pathname === '/' || pathname === '/index.html') && req.method === 'GET') {
         const localDashboardPath = getDashboardPath(repoRoot);
@@ -433,6 +466,32 @@ export async function startServer(options = {}) {
         const payload = getPayload(db, repoRoot);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload, null, 2));
+      }
+
+      // Attention Queue API
+      if (pathname === '/api/queue' && req.method === 'GET') {
+        const queue = computeAttentionQueue(db, repoRoot);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(queue, null, 2));
+      }
+
+      // Human Handoff Card API
+      const handoffMatch = pathname.match(/^\/api\/handoff(?:\/([A-Za-z0-9-_]+))?$/);
+      if (handoffMatch && req.method === 'GET') {
+        const taskId = handoffMatch[1] || parsedUrl.searchParams.get('taskId') || null;
+        const format = parsedUrl.searchParams.get('format') || 'json';
+        try {
+          const card = generateHandoffCard({ taskId, db, repoRoot, format });
+          if (format === 'markdown' || format === 'text') {
+            res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+            return res.end(card);
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(card, null, 2));
+        } catch (err) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: err.message }));
+        }
       }
 
       const leaseRollupMatch = pathname.match(/^\/api\/leases\/([A-Za-z0-9-]+)\/rollup$/);
@@ -462,15 +521,24 @@ export async function startServer(options = {}) {
         return;
       }
 
-      // 4. POST /api/eject -> Eject agent lease to human
-      if (pathname === '/api/eject' && req.method === 'POST') {
-        const body = await readBodyJson(req);
-        if (!body.taskId) {
+      // 4. POST /api/eject or POST /api/tasks/:id/eject -> Eject agent lease to human
+      const taskEjectMatch = pathname.match(/^\/api\/tasks\/([A-Za-z0-9-_]+)\/eject$/);
+      if ((pathname === '/api/eject' || taskEjectMatch) && req.method === 'POST') {
+        let taskId = taskEjectMatch ? taskEjectMatch[1] : null;
+        if (!taskId || (req.headers['content-type'] && req.headers['content-type'].includes('application/json'))) {
+          try {
+            const body = await readBodyJson(req);
+            if (body && body.taskId) taskId = body.taskId;
+          } catch (e) {
+            if (!taskId) throw e;
+          }
+        }
+        if (!taskId) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'Missing required field: taskId' }));
         }
 
-        const updatedTask = ejectTaskToHuman(body.taskId, db, repoRoot);
+        const updatedTask = performHumanTakeover(taskId, db, repoRoot);
         broadcastState();
 
         res.writeHead(200, { 'Content-Type': 'application/json' });

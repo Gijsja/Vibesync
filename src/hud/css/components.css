@@ -1,0 +1,177 @@
+/**
+ * src/hud/css/components.css
+ * VibeSync Ambient HUD Component Styles
+ */
+
+/* Attention Queue Bar */
+.attention-queue-section {
+  margin-bottom: 1.25rem;
+}
+
+.attention-queue-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1.15rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: var(--card-shadow);
+  flex-wrap: wrap;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.attention-queue-card.has-alerts {
+  border-left: 4px solid var(--red);
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.05) 0%, var(--bg-surface) 35%);
+}
+
+.attention-queue-card.calm {
+  border-left: 4px solid var(--green);
+}
+
+.attention-queue-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.attention-queue-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.attention-queue-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.attention-queue-headline {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.attention-queue-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.queue-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 9999px;
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.15s, transform 0.1s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.queue-pill:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+.pill-decisions {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--red);
+  border: 1px solid var(--red);
+}
+
+.pill-reviews {
+  background: rgba(192, 132, 252, 0.15);
+  color: var(--purple);
+  border: 1px solid var(--purple);
+}
+
+.pill-blocked {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--yellow);
+  border: 1px solid var(--yellow);
+}
+
+.pill-active {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.attention-queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Handoff Modal Components */
+.handoff-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.handoff-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.handoff-box {
+  background: var(--panel-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.handoff-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.handoff-meta-item {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 11px;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.handoff-meta-item .label {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.handoff-meta-item .val {
+  color: var(--text);
+  font-weight: 600;
+}

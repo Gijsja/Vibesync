@@ -52,6 +52,12 @@ local project. If the command is not found, add `bun pm bin -g` to your shell `P
 
 `vibesync --help` lists runtime options. Use `--port 0` to choose a free port.
 
+### Human Handoff & Agent Instructions
+
+- **Inspect active task handoff**: `vibesync --handoff [TASK_ID]` renders a one-screen human handoff card summarizing attention status (`NEEDS DECISION`, `NEEDS REVIEW`, `BLOCKED`, `IN PROGRESS`), what changed, contract goal, gate verification evidence, drift risks, rollback anchors, and the exact decision requested.
+- **Eject task to human operator**: `vibesync --eject <TASK_ID>` reclaims an active agent lease for a human operator, resets tripped circuit breakers, and grants a fresh 45-minute lease.
+- **Export agent instructions**: `vibesync --agent-instructions` prints the 5 constrained rules of engagement and tool protocols directly to stdout for AI coding agents.
+
 ## Everyday workflow
 
 1. **Create a feature.** Give it a title, acceptance criteria, target milestone,

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VibeSync Operations HUD</title>
+  <link rel="stylesheet" href="./css/tokens.css" />
+  <link rel="stylesheet" href="./css/components.css" />
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <div class="brand-logo">
+        <span class="brand-title">VibeSync Calm Operations HUD</span>
+      </div>
+    </div>
+  </header>
+
+  <main style="padding: 1.5rem; max-width: 1200px; margin: 0 auto; width: 100%;">
+    <section class="attention-queue-section" id="attention-queue-section">
+      <div class="attention-queue-card">
+        <div class="attention-queue-main">
+          <div class="attention-queue-header">
+            <span class="attention-queue-badge">🎯 ATTENTION QUEUE</span>
+            <span class="attention-queue-headline" id="attention-headline">Connecting to VibeSync engine…</span>
+          </div>
+          <div class="attention-queue-pills" id="attention-pills">
+            <span class="queue-pill pill-decisions" id="pill-decisions" style="display:none;">0 Decisions</span>
+            <span class="queue-pill pill-reviews" id="pill-reviews" style="display:none;">0 Reviews</span>
+            <span class="queue-pill pill-blocked" id="pill-blocked" style="display:none;">0 Blocked</span>
+            <span class="queue-pill pill-active" id="pill-active" style="display:none;">0 Active</span>
+          </div>
+        </div>
+        <div class="attention-queue-actions">
+          <button class="btn-sm btn-accent" id="attention-action-btn" style="display:none;">📋 Inspect Handoff</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module">
+    import { VibesyncHudApp } from './js/app.js';
+    const app = new VibesyncHudApp();
+    app.init();
+    window.vibesyncHud = app;
+  </script>
+</body>
+</html>

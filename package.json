@@ -22,7 +22,10 @@
     "./settle": "./src/settle.mjs",
     "./server": "./src/server.mjs",
     "./mcp": "./src/mcp.mjs",
-    "./repair": "./src/repair.mjs"
+    "./repair": "./src/repair.mjs",
+    "./handoff": "./src/handoff.mjs",
+    "./fastpath": "./src/fastpath.mjs",
+    "./telemetry": "./src/telemetry.mjs"
   },
   "scripts": {
     "test": "node --test tests/**/*.test.mjs",

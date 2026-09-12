@@ -26,6 +26,7 @@ import { repairDatabase } from './repair.mjs';
 import { previewTask, previewFeature, approveTaskCommand, approveFeatureCommand, getExecutionPolicy, detectSandboxCapabilities, migratePolicy } from './policy.mjs';
 import { buildLeaseRollup } from './audit.mjs';
 import { routeTask, getAdapterStatus, cancelAdapterRun, collectAdapterResult, handoffAdapterRun, readAdapterOutput } from './adapters.mjs';
+import { computeAgentTelemetry } from './telemetry.mjs';
 
 const commandSchema = { oneOf: [
   { type: 'string', description: 'Legacy shell-free command string.' },
@@ -468,12 +469,18 @@ export function createMcpServer(options = {}) {
         if (!task) return { content: [{ type: 'text', text: compactText({ active: false, next_action: 'List ready tasks.' }) }] };
         const expired = db.prepare("SELECT datetime(lease_expires_at) <= datetime('now') AS expired FROM tasks WHERE id = ?").get(task.id)?.expired === 1;
         const drift = task.worktree_path ? inspectBranchDrift(task.worktree_path, repoRoot) : null;
+        const telemetry = computeAgentTelemetry(task, db, repoRoot);
         return { content: [{ type: 'text', text: compactText({
           active: !expired,
           expired,
           ...taskBrief(task),
           worktree_path: task.worktree_path || null,
           ...(drift && drift.behind_trunk > 0 ? { drift } : {}),
+          telemetry: {
+            confidence: telemetry.confidence,
+            evidence: telemetry.evidence,
+            uncertainty: telemetry.uncertainty
+          },
           lease: {
             expires_at: task.lease_expires_at || null,
             last_heartbeat_at: task.last_heartbeat_at || null,

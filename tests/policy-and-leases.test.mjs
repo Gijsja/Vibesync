@@ -117,8 +117,8 @@ test('required Bubblewrap mounts only derived gate write roots', async () => {
     fs.writeFileSync(path.join(sandbox.dir, '.vibesync/policy.json'), JSON.stringify({ sandbox_mode: 'required' }));
     fs.mkdirSync(path.join(sandbox.dir, 'allowed'), { recursive: true });
     const gates = [
-      { type: 'argv', argv: ['node', '-e', "require('fs').writeFileSync('allowed/ok.txt','ok')"], write_paths: ['allowed/**'] },
-      { type: 'argv', argv: ['node', '-e', "require('fs').writeFileSync('outside.txt','blocked')"], write_paths: ['allowed/**'] }
+      { type: 'argv', argv: ['node', '-e', "import('node:fs').then(fs => fs.writeFileSync('allowed/ok.txt','ok'))"], write_paths: ['allowed/**'] },
+      { type: 'argv', argv: ['node', '-e', "import('node:fs').then(fs => fs.writeFileSync('outside.txt','blocked'))"], write_paths: ['allowed/**'] }
     ];
     const result = executeGates(gates, { cwd: sandbox.dir, db, actorName: 'local-qwen', repoRoot: sandbox.dir, allowedPaths: ['*'] });
     if (result.failedGate?.code === 'SANDBOX_UNAVAILABLE') {

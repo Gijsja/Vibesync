@@ -2009,6 +2009,70 @@
       .meta-code { overflow-wrap: anywhere; }
     }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+    /* Calm Operations Attention Queue Bar */
+    .attention-queue-section { margin-bottom: 1.25rem; }
+    .attention-queue-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md, 8px);
+      padding: 0.85rem 1.15rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      box-shadow: var(--card-shadow);
+      flex-wrap: wrap;
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+    .attention-queue-card.has-alerts {
+      border-left: 4px solid var(--red);
+      background: linear-gradient(90deg, rgba(239, 68, 68, 0.05) 0%, var(--bg-surface) 35%);
+    }
+    .attention-queue-card.calm { border-left: 4px solid var(--green); }
+    .attention-queue-main { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: 1; min-width: 0; }
+    .attention-queue-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .attention-queue-badge {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: var(--panel-hover);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .attention-queue-headline { font-weight: 600; font-size: 13px; color: var(--text); }
+    .attention-queue-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .queue-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 9px;
+      border-radius: 9999px;
+      cursor: pointer;
+      user-select: none;
+      transition: opacity 0.15s, transform 0.1s;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .queue-pill:hover { opacity: 0.85; transform: translateY(-1px); }
+    .pill-decisions { background: rgba(239, 68, 68, 0.15); color: var(--red); border: 1px solid var(--red); }
+    .pill-reviews { background: rgba(192, 132, 252, 0.15); color: var(--purple); border: 1px solid var(--purple); }
+    .pill-blocked { background: rgba(245, 158, 11, 0.15); color: var(--yellow); border: 1px solid var(--yellow); }
+    .pill-active { background: rgba(56, 189, 248, 0.15); color: var(--accent); border: 1px solid var(--accent); }
+    .attention-queue-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+    /* Handoff Modal Components */
+    .handoff-section { display: flex; flex-direction: column; gap: 6px; }
+    .handoff-section-title { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .handoff-box { background: var(--panel-hover); border: 1px solid var(--border); border-radius: 4px; padding: 9px 12px; font-size: 12px; line-height: 1.5; color: var(--text); }
+    .handoff-meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+    .handoff-meta-item { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 4px; padding: 7px 11px; font-size: 11px; display: flex; flex-direction: column; gap: 2px; }
+    .handoff-meta-item .label { color: var(--text-muted); font-size: 10px; text-transform: uppercase; font-weight: 700; }
+    .handoff-meta-item .val { color: var(--text); font-weight: 600; }
   </style>
 </head>
 <body>
@@ -2047,6 +2111,28 @@
   <!-- Main Grid -->
   <div class="container">
     <main>
+      <!-- Calm Operations Attention Queue Bar -->
+      <section class="attention-queue-section" id="attention-queue-section" aria-label="Operational Attention Queue">
+        <div class="attention-queue-card">
+          <div class="attention-queue-main">
+            <div class="attention-queue-header">
+              <span class="attention-queue-badge">🎯 ATTENTION QUEUE</span>
+              <span class="attention-queue-headline" id="attention-headline">All clear — zero blocked tasks or pending decisions.</span>
+            </div>
+            <div class="attention-queue-pills" id="attention-pills">
+              <span class="queue-pill pill-decisions" id="pill-decisions" style="display:none;" onclick="setFilter('blocked', this)">0 Decisions</span>
+              <span class="queue-pill pill-reviews" id="pill-reviews" style="display:none;" onclick="setFilter('all', this)">0 Reviews</span>
+              <span class="queue-pill pill-blocked" id="pill-blocked" style="display:none;" onclick="setFilter('blocked', this)">0 Blocked</span>
+              <span class="queue-pill pill-active" id="pill-active" style="display:none;" onclick="setFilter('in_progress', this)">0 Active</span>
+            </div>
+          </div>
+          <div class="attention-queue-actions">
+            <button class="btn-sm btn-accent" id="attention-action-btn" onclick="openTopAttentionHandoff()" style="display:none;">📋 Inspect Handoff</button>
+            <button class="btn-sm" onclick="openHandoffModal()" title="View full human handoff card &amp; telemetry">📋 Handoff Card</button>
+          </div>
+        </div>
+      </section>
+
       <!-- Filter & Controls Bar -->
       <div class="controls-bar">
         <div class="filter-group">
@@ -2474,6 +2560,71 @@
     </div>
   </div>
 
+  <!-- MODAL: Human Handoff Card & Telemetry -->
+  <div class="modal-overlay" id="handoff-modal">
+    <div class="modal" style="width: 780px; max-width: 95vw;">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:16px;">📋</span>
+          <div class="modal-title">Operational Handoff Card</div>
+        </div>
+        <button class="modal-close" aria-label="Close" onclick="closeModal('handoff-modal')">&times;</button>
+      </div>
+      <div class="modal-body" style="max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;">
+        <!-- Top Selector & Format Toggle -->
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; padding-bottom:10px; border-bottom:1px solid var(--border);">
+          <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:220px;">
+            <label for="handoff-task-select" style="font-size:12px; font-weight:600; color:var(--text-muted); white-space:nowrap;">Select Task:</label>
+            <select class="form-control" id="handoff-task-select" onchange="loadHandoffData(this.value)" style="flex:1;">
+              <!-- Populated dynamically -->
+            </select>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="filter-btn active" id="handoff-view-visual" onclick="setHandoffView('visual')">Visual View</button>
+            <button class="filter-btn" id="handoff-view-raw" onclick="setHandoffView('raw')">Terminal / Markdown</button>
+          </div>
+        </div>
+
+        <!-- Visual View Container -->
+        <div id="handoff-visual-content" style="display:flex; flex-direction:column; gap:12px;">
+          <div class="handoff-section" id="handoff-meta-box"></div>
+          <div class="handoff-section">
+            <div class="handoff-section-title">📂 What Changed (Worktree Changes)</div>
+            <div id="handoff-changes-box" class="handoff-box"></div>
+          </div>
+          <div class="handoff-section">
+            <div class="handoff-section-title">🎯 Why (Contract Goal &amp; Allowed Scope)</div>
+            <div id="handoff-why-box" class="handoff-box"></div>
+          </div>
+          <div class="handoff-section">
+            <div class="handoff-section-title">🧪 Evidence (Gates &amp; Verification Runs)</div>
+            <div id="handoff-evidence-box" class="handoff-box"></div>
+          </div>
+          <div class="handoff-section">
+            <div class="handoff-section-title">⚠️ Risks, Drift &amp; Rollback</div>
+            <div id="handoff-risks-box" class="handoff-box"></div>
+          </div>
+          <div class="handoff-section" style="background: rgba(56, 189, 248, 0.08); border: 1px solid var(--accent); border-radius: 6px; padding: 10px 14px;">
+            <div style="font-size:11px; font-weight:800; color:var(--accent); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">👉 Next Action Requested</div>
+            <div id="handoff-next-action" style="font-size:13px; font-weight:600; color:var(--text);"></div>
+          </div>
+        </div>
+
+        <!-- Raw View Container (Terminal / Markdown) -->
+        <div id="handoff-raw-content" style="display:none;">
+          <pre id="handoff-raw-text" class="terminal-box" style="white-space:pre-wrap; max-height:420px; overflow:auto; font-size:12px; line-height:1.45;"></pre>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; gap:8px;">
+          <button class="btn-sm" onclick="copyHandoffCardToClipboard()">📋 Copy Card</button>
+          <button class="btn-sm btn-danger" id="handoff-eject-btn" onclick="ejectFromHandoffModal()">⚡ Eject to Human</button>
+        </div>
+        <button onclick="closeModal('handoff-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     /*__INITIAL_STATE_PLACEHOLDER__*/
 
@@ -2791,6 +2942,7 @@
     function renderCurrent() {
       if (!currentState) return;
       const data = currentState;
+      renderAttentionQueueBar(data.attentionQueue);
       const operations = data.operations || [];
       renderWorkflow();
       const running = operations.find(op => op.status === 'running');
@@ -3024,6 +3176,7 @@
 
                       <div class="task-actions-col">
                         <button class="btn-sm" onclick="viewTaskLogs(${actionArg(t.id)})">Logs</button>
+                        <button class="btn-sm" onclick="openHandoffModal(${actionArg(t.id)})" title="View handoff card with telemetry &amp; evidence">📋 Handoff</button>
                         ${(t.status === 'ready' || t.status === 'backlog' || t.status === 'blocked') && !isSuperseded ? `<button class="btn-primary btn-sm" onclick="openClaimTask(${actionArg(t.id)})">${t.status === 'blocked' ? 'Human takeover' : 'Start task'}</button>` : ''}
                         ${(t.status === 'ready' || t.status === 'backlog' || t.status === 'review' || t.status === 'blocked') && !isSuperseded ? `<button class="btn-sm" onclick="supersedeTask(${actionArg(t.id)})">Supersede</button>` : ''}
                         ${t.status === 'in_progress' ? `<button class="btn-sm" onclick="releaseTask(${actionArg(t.id)})">Release</button>` : ''}
@@ -3161,6 +3314,272 @@
         if (pill) pill.className = "connection-badge disconnected";
         if (txt) txt.textContent = "Server Offline";
       }
+    }
+
+    // Calm Operations Attention Queue Controller
+    function renderAttentionQueueBar(queue) {
+      const queueSection = document.getElementById('attention-queue-section');
+      if (!queueSection) return;
+      if (!queue || !queue.summary) {
+        queueSection.style.display = 'none';
+        return;
+      }
+      queueSection.style.display = 'block';
+      const cardEl = queueSection.querySelector('.attention-queue-card');
+      const headlineEl = document.getElementById('attention-headline');
+      const actionBtn = document.getElementById('attention-action-btn');
+
+      const pillDecisions = document.getElementById('pill-decisions');
+      const pillReviews = document.getElementById('pill-reviews');
+      const pillBlocked = document.getElementById('pill-blocked');
+      const pillActive = document.getElementById('pill-active');
+
+      const { total, decisionsCount, reviewsCount, blockedCount, inProgressCount } = queue.summary;
+
+      if (pillDecisions) {
+        pillDecisions.style.display = decisionsCount > 0 ? 'inline-flex' : 'none';
+        pillDecisions.textContent = `🚨 ${decisionsCount} Decision${decisionsCount === 1 ? '' : 's'}`;
+      }
+      if (pillReviews) {
+        pillReviews.style.display = reviewsCount > 0 ? 'inline-flex' : 'none';
+        pillReviews.textContent = `👀 ${reviewsCount} Review${reviewsCount === 1 ? '' : 's'}`;
+      }
+      if (pillBlocked) {
+        pillBlocked.style.display = blockedCount > 0 ? 'inline-flex' : 'none';
+        pillBlocked.textContent = `⛔ ${blockedCount} Blocked`;
+      }
+      if (pillActive) {
+        pillActive.style.display = inProgressCount > 0 ? 'inline-flex' : 'none';
+        pillActive.textContent = `⚡ ${inProgressCount} Active`;
+      }
+
+      if (total === 0 || (!decisionsCount && !reviewsCount && !blockedCount && !inProgressCount)) {
+        if (cardEl) { cardEl.classList.remove('has-alerts'); cardEl.classList.add('calm'); }
+        if (headlineEl) headlineEl.textContent = 'All clear — zero blocked tasks or pending decisions. Agents operating autonomously.';
+        if (actionBtn) actionBtn.style.display = 'none';
+      } else {
+        if (cardEl) {
+          if (decisionsCount > 0 || blockedCount > 0) {
+            cardEl.classList.remove('calm'); cardEl.classList.add('has-alerts');
+          } else {
+            cardEl.classList.remove('has-alerts', 'calm');
+          }
+        }
+        if (queue.topAction) {
+          const { category, title, action, taskId } = queue.topAction;
+          if (headlineEl) {
+            headlineEl.innerHTML = `<strong>${escapeHtml(category.toUpperCase())}:</strong> ${escapeHtml(title)} &mdash; <span style="color:var(--text-muted);">${escapeHtml(action)}</span>`;
+          }
+          if (actionBtn) {
+            actionBtn.style.display = 'inline-block';
+            actionBtn.textContent = category === 'decision' ? '🚨 Intervene' : '📋 Inspect Handoff';
+            actionBtn.onclick = () => openHandoffModal(taskId);
+          }
+        } else if (headlineEl) {
+          headlineEl.textContent = `${total} item${total === 1 ? '' : 's'} in attention queue.`;
+          if (actionBtn) actionBtn.style.display = 'none';
+        }
+      }
+    }
+
+    // Human Handoff Card Controller
+    let currentHandoffTaskId = null;
+    let currentHandoffCard = null;
+    let currentHandoffText = '';
+
+    function openTopAttentionHandoff() {
+      const topTaskId = currentState?.attentionQueue?.topAction?.taskId;
+      openHandoffModal(topTaskId);
+    }
+
+    async function openHandoffModal(taskId = null) {
+      const tasks = currentState?.tasks || [];
+      if (!taskId) {
+        if (currentState?.attentionQueue?.topAction?.taskId) {
+          taskId = currentState.attentionQueue.topAction.taskId;
+        } else {
+          const active = tasks.find(t => t.status === 'in_progress' || t.status === 'blocked');
+          taskId = active ? active.id : (tasks[0]?.id || null);
+        }
+      }
+
+      currentHandoffTaskId = taskId;
+      const select = document.getElementById('handoff-task-select');
+      if (select) {
+        select.innerHTML = tasks.length === 0
+          ? '<option value="">No tasks available</option>'
+          : tasks.map(t => `<option value="${escapeHtml(t.id)}" ${t.id === taskId ? 'selected' : ''}>${escapeHtml(t.id)}: ${escapeHtml(t.title)} (${escapeHtml(t.status)})</option>`).join('');
+      }
+
+      openModal('handoff-modal');
+      if (taskId) await loadHandoffData(taskId);
+    }
+
+    async function loadHandoffData(taskId) {
+      currentHandoffTaskId = taskId;
+      const rawEl = document.getElementById('handoff-raw-text');
+      if (rawEl) rawEl.textContent = 'Loading handoff data…';
+
+      try {
+        const [jsonRes, textRes] = await Promise.all([
+          fetch(`${API_BASE}/api/handoff/${encodeURIComponent(taskId)}`),
+          fetch(`${API_BASE}/api/handoff/${encodeURIComponent(taskId)}?format=text`)
+        ]);
+
+        if (!jsonRes.ok) throw new Error((await jsonRes.json()).error || 'Failed to fetch handoff');
+        const card = await jsonRes.json();
+        const text = await textRes.text();
+
+        currentHandoffCard = card;
+        currentHandoffText = text;
+
+        if (rawEl) rawEl.textContent = text;
+        renderHandoffVisual(card);
+      } catch (err) {
+        if (rawEl) rawEl.textContent = `Error loading handoff card: ${err.message}`;
+        renderHandoffVisualFallback(taskId, err.message);
+      }
+    }
+
+    function renderHandoffVisual(card) {
+      const metaBox = document.getElementById('handoff-meta-box');
+      const changesBox = document.getElementById('handoff-changes-box');
+      const whyBox = document.getElementById('handoff-why-box');
+      const evidenceBox = document.getElementById('handoff-evidence-box');
+      const risksBox = document.getElementById('handoff-risks-box');
+      const nextActionBox = document.getElementById('handoff-next-action');
+      const ejectBtn = document.getElementById('handoff-eject-btn');
+
+      const task = card.task || {};
+      const feature = card.feature || {};
+      const leaseRemaining = card.leaseRemainingSeconds != null
+        ? (card.leaseRemainingSeconds > 0 ? `${card.leaseRemainingSeconds}s remaining` : 'Expired')
+        : 'None';
+
+      if (metaBox) {
+        metaBox.innerHTML = `
+          <div class="handoff-meta-grid">
+            <div class="handoff-meta-item">
+              <span class="label">Task</span>
+              <span class="val">${escapeHtml(task.id || '')}: ${escapeHtml(task.title || '')}</span>
+            </div>
+            <div class="handoff-meta-item">
+              <span class="label">Status</span>
+              <span class="val"><span class="badge badge-${escapeHtml(task.status || '')}">${escapeHtml(task.status || '')}</span></span>
+            </div>
+            <div class="handoff-meta-item">
+              <span class="label">Assigned Actor</span>
+              <span class="val">${escapeHtml(task.assigned_actor || 'unassigned')}</span>
+            </div>
+            <div class="handoff-meta-item">
+              <span class="label">Active Lease</span>
+              <span class="val">${escapeHtml(leaseRemaining)}</span>
+            </div>
+            <div class="handoff-meta-item">
+              <span class="label">Circuit Breaker</span>
+              <span class="val" style="${task.consecutive_failures > 0 ? 'color:var(--red); font-weight:700;' : ''}">${task.consecutive_failures || 0} / ${task.max_failures || 3} failures</span>
+            </div>
+            <div class="handoff-meta-item">
+              <span class="label">Feature</span>
+              <span class="val">${escapeHtml(feature.id ? `${feature.id}: ${feature.title}` : (task.feature_id || 'None'))}</span>
+            </div>
+          </div>
+        `;
+      }
+
+      if (changesBox) {
+        const changes = card.changes || { modified: [], untracked: [], diffstat: '' };
+        changesBox.innerHTML = `
+          <div><strong>Worktree:</strong> <code>${escapeHtml(card.worktreePath || 'Not provisioned')}</code></div>
+          <div style="margin-top:4px;"><strong>Modified files (${changes.modified.length}):</strong> ${changes.modified.length > 0 ? changes.modified.map(f => `<code>${escapeHtml(f)}</code>`).join(', ') : '<em>None</em>'}</div>
+          <div style="margin-top:2px;"><strong>Untracked files (${changes.untracked.length}):</strong> ${changes.untracked.length > 0 ? changes.untracked.map(f => `<code>${escapeHtml(f)}</code>`).join(', ') : '<em>None</em>'}</div>
+          ${changes.diffstat ? `<div style="margin-top:4px; font-family:var(--font-mono); font-size:11px; color:var(--text-muted);">${escapeHtml(changes.diffstat.split('\n')[0])}</div>` : ''}
+        `;
+      }
+
+      if (whyBox) {
+        const allowed = Array.isArray(task.allowed_paths) ? task.allowed_paths.join(', ') : (task.allowed_paths || '*');
+        whyBox.innerHTML = `
+          <div><strong>Goal:</strong> ${escapeHtml(task.title || '')}</div>
+          <div style="margin-top:3px;"><strong>Allowed Paths:</strong> <code>${escapeHtml(allowed)}</code></div>
+          ${feature.spec_markdown ? `<div style="margin-top:4px; color:var(--text-muted); font-size:11px;"><em>${escapeHtml(feature.spec_markdown.trim().split('\n')[0].slice(0, 120))}...</em></div>` : ''}
+        `;
+      }
+
+      if (evidenceBox) {
+        const gates = card.requiredGates || [];
+        const runs = card.gateRuns || [];
+        evidenceBox.innerHTML = `
+          <div><strong>Required Gates:</strong> ${gates.length > 0 ? gates.map(g => `<code>${escapeHtml(g.command || g)}</code>`).join(' &nbsp; ') : '<em>None required</em>'}</div>
+          <div style="margin-top:6px; display:flex; flex-direction:column; gap:3px;">
+            ${runs.length > 0
+              ? runs.slice(0, 5).map(r => `
+                <div style="display:flex; justify-content:space-between; font-size:11px; font-family:var(--font-mono);">
+                  <span style="color:${r.status === 'passed' ? 'var(--green)' : 'var(--red)'}; font-weight:700;">[${escapeHtml((r.status || '').toUpperCase())}] exit ${r.exit_code ?? 0}</span>
+                  <span style="color:var(--text-muted);">${r.duration_ms || 0}ms</span>
+                  <span style="flex:1; margin-left:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(r.summary || 'gate run')}</span>
+                </div>`).join('')
+              : '<div style="color:var(--text-muted); font-size:11px;">No gate runs recorded yet.</div>'
+            }
+          </div>
+        `;
+      }
+
+      if (risksBox) {
+        const drift = card.drift;
+        const rollback = card.rollback || {};
+        const driftText = drift
+          ? (drift.behind_trunk === 0 ? 'Clean (0 commits behind trunk)' : `${drift.behind_trunk} commits behind trunk (${drift.warning || 'drift'})`)
+          : 'No worktree drift inspected';
+        risksBox.innerHTML = `
+          <div><strong>Drift from trunk:</strong> ${escapeHtml(driftText)}</div>
+          <div style="margin-top:3px;"><strong>Recovery Branch:</strong> <code>${escapeHtml(rollback.branch || 'None')}</code> (Base: <code>${escapeHtml((rollback.baseCommit || 'HEAD').slice(0, 7))}</code>)</div>
+        `;
+      }
+
+      if (nextActionBox) {
+        nextActionBox.textContent = card.nextAction || 'Continue regular task lifecycle.';
+      }
+
+      if (ejectBtn) {
+        const canEject = task.status === 'in_progress' || (task.assigned_actor && task.assigned_actor !== 'human');
+        ejectBtn.style.display = canEject ? 'inline-block' : 'none';
+      }
+    }
+
+    function renderHandoffVisualFallback(taskId, errMsg) {
+      const metaBox = document.getElementById('handoff-meta-box');
+      if (metaBox) metaBox.innerHTML = `<div class="handoff-box" style="color:var(--red);">Failed to load task handoff: ${escapeHtml(errMsg)}</div>`;
+    }
+
+    function setHandoffView(mode) {
+      const visualBox = document.getElementById('handoff-visual-content');
+      const rawBox = document.getElementById('handoff-raw-content');
+      const visualBtn = document.getElementById('handoff-view-visual');
+      const rawBtn = document.getElementById('handoff-view-raw');
+
+      if (mode === 'visual') {
+        if (visualBox) visualBox.style.display = 'flex';
+        if (rawBox) rawBox.style.display = 'none';
+        if (visualBtn) visualBtn.classList.add('active');
+        if (rawBtn) rawBtn.classList.remove('active');
+      } else {
+        if (visualBox) visualBox.style.display = 'none';
+        if (rawBox) rawBox.style.display = 'block';
+        if (visualBtn) visualBtn.classList.remove('active');
+        if (rawBtn) rawBtn.classList.add('active');
+      }
+    }
+
+    function copyHandoffCardToClipboard() {
+      if (!currentHandoffText) return;
+      copyToClipboard(currentHandoffText, 'Handoff card copied to clipboard!');
+    }
+
+    async function ejectFromHandoffModal() {
+      if (!currentHandoffTaskId) return;
+      await ejectTask(currentHandoffTaskId);
+      await loadHandoffData(currentHandoffTaskId);
     }
 
     // Interactive Actions

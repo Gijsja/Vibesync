@@ -66,6 +66,12 @@ vibesync-bun --hud --repo /absolute/path/to/your-project
 
 If `vibesync-bun` is not found, add `bun pm bin -g` to your shell `PATH`. The existing `vibesync` command remains the Node.js entrypoint.
 
+### CLI shortcuts: handoff & agent instructions
+
+- `vibesync --handoff [TASK_ID]`: Displays a one-screen human handoff card summarizing operational facts (what changed, why, verification evidence, drift risks, and next actions).
+- `vibesync --eject <TASK_ID>`: Reclaims an active agent task for a human operator, resets tripped circuit breakers, and grants a fresh 45-minute lease.
+- `vibesync --agent-instructions`: Outputs disciplined operating guidelines and tool protocol directly to stdout for AI coding agents.
+
 Initialization connects an existing Git repository at its root. For a folder that
 is not yet a repository, it initializes Git and creates one VibeSync-owned empty
 anchor commit, so managed worktrees work immediately. It preserves existing MCP
