@@ -114,7 +114,14 @@ function checkCanonicalSkill(repoRoot) {
   }
   assertIncludes(text, ['vibesync_preview_task', 'vibesync_claim_task', 'vibesync_verify_and_settle'], 'Canonical skill workflow');
   if (!/worker/i.test(text) || !/admin/i.test(text)) throw new Error('Canonical skill must document worker and admin role boundaries.');
-  return `${CANONICAL_SKILL} metadata and worker workflow validated`;
+  const agentsSkill = path.join(repoRoot, '.agents', 'skills', 'vibesync-mcp', 'SKILL.md');
+  if (existing(agentsSkill)) {
+    const agentsText = fs.readFileSync(agentsSkill, 'utf8');
+    if (agentsText !== text) {
+      throw new Error(`Workspace skill drift detected: .agents/skills/vibesync-mcp/SKILL.md diverges from canonical ${CANONICAL_SKILL}.`);
+    }
+  }
+  return `${CANONICAL_SKILL} metadata, worker workflow, and workspace synchronization validated`;
 }
 
 function validateBinding(config, label) {

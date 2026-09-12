@@ -178,6 +178,39 @@ test('baseline command passes when every declared release surface agrees', async
   });
 });
 
+test('baseline reports failure when .agents/skills/vibesync-mcp drifts from canonical skill', async () => {
+  await withSandbox(async sandbox => {
+    const write = (relative, content) => {
+      const target = path.join(sandbox.dir, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content);
+    };
+    write('scripts/vibesync.mjs', "console.log('--mcp-role --agent-instructions --queue --handoff --eject');\n");
+    write('scripts/vibesync-bun.mjs', "console.log('--mcp-role --agent-instructions --queue --handoff --eject');\n");
+    write('scripts/vibesync-baseline.mjs', '');
+    write('scripts/vibesync-bun-baseline.mjs', '');
+    write('skills/vibesync-mcp/SKILL.md', `---\nname: vibesync-mcp\ndescription: Canonical workflow\n---\nWorker and admin roles use vibesync_preview_task, vibesync_claim_task, and vibesync_verify_and_settle.\n`);
+    write('.agents/skills/vibesync-mcp/SKILL.md', `---\nname: vibesync-mcp\ndescription: Divergent workflow\n---\nOutdated instructions\n`);
+    const nodeConfig = JSON.stringify({ mcpServers: { vibesync: { command: 'node', args: ['/package/scripts/vibesync.mjs'] } } });
+    const bunConfig = JSON.stringify({ mcpServers: { vibesync: { command: 'vibesync-bun', args: [] } } });
+    write('.mcp.example.json', nodeConfig);
+    write('.mcp.bun.example.json', bunConfig);
+    write('docs/AGENT_IDE_SETUP.md', 'Node and Bun runtime matrix. Worker and admin policy, approval, and sandbox behavior. Canonical skill: skills/vibesync-mcp/SKILL.md.\n');
+    write('package.json', JSON.stringify({
+      version: '1.0.0',
+      files: ['scripts/vibesync-baseline.mjs', 'scripts/vibesync-bun-baseline.mjs', 'skills/vibesync-mcp/', '.mcp.example.json', '.mcp.bun.example.json'],
+      scripts: { baseline: 'node scripts/vibesync-baseline.mjs', 'baseline:bun': 'bun scripts/vibesync-bun-baseline.mjs' },
+      bin: { 'vibesync-baseline': './scripts/vibesync-baseline.mjs' }
+    }));
+
+    const receipt = await createBaselineReceipt({ repoRoot: sandbox.dir });
+    assert.equal(receipt.status, 'fail');
+    const skillCheck = receipt.evidence.find(item => item.id === 'canonical_skill');
+    assert.equal(skillCheck.status, 'fail');
+    assert.match(skillCheck.summary, /Workspace skill drift detected/);
+  });
+});
+
 test('baseline argument parsing supports explicit repository and receipt paths', () => {
   const parsed = parseBaselineArgs(['--repo', '.', '--output', 'receipt.json']);
   assert.equal(parsed.repoRoot, path.resolve('.'));
