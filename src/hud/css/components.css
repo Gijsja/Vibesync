@@ -91,6 +91,11 @@
   transform: translateY(-1px);
 }
 
+.queue-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .pill-decisions {
   background: rgba(239, 68, 68, 0.15);
   color: var(--red);
@@ -120,6 +125,11 @@
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.btn-sm:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Handoff Modal Components */
