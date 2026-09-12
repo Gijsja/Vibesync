@@ -103,7 +103,10 @@ The default worker surface can list and inspect ready tasks, claim work, verify 
 settle it, and park discoveries. Human administration tools are exposed separately
 with `npm start -- --mcp-role admin`; they create contracts, curate insights,
 settle features, and repair state. See the
-[usage guide](docs/USAGE.md) for details.
+[usage guide](docs/USAGE.md) for details and the
+[agent and IDE setup matrix](docs/AGENT_IDE_SETUP.md) for supported Node, Bun,
+`.mcp.json`, and Codex bindings. Agent integrations should follow the canonical
+[`skills/vibesync-mcp/SKILL.md`](skills/vibesync-mcp/SKILL.md) workflow.
 
 For the smallest agent context footprint, connect an agent to the worker MCP server
 only while it is assigned work, keep the administrator MCP server in a human-controlled

@@ -116,6 +116,10 @@ binding is a worker connection by default. Worker and administrative tools are
 never exposed together by the CLI, preventing a worker from changing its own
 scope, gates, strike state, or feature contract. Tool failures use structured JSON
 with the current strike count, exact failure, and forbidden follow-up actions.
+See [Agent and IDE MCP setup](AGENT_IDE_SETUP.md) for the Node/Bun binding and
+client-support matrix, including the native Codex configuration form. All agent
+setups should use the canonical
+[`skills/vibesync-mcp/SKILL.md`](../skills/vibesync-mcp/SKILL.md) workflow.
 
 ### Worker surface
 
