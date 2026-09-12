@@ -103,9 +103,8 @@ export function inspectBaselineReadiness(repoRoot, allowedPaths = ['*']) {
     const rawStatus = git(repoRoot, ['status', '--porcelain', '-uall']);
     uncommitted_files = rawStatus
       .split('\n')
-      .map(line => line.trim())
-      .filter(line => Boolean(line) && !line.includes('.vibesync'))
-      .map(line => line.slice(3).trim());
+      .filter(line => Boolean(line.trim()) && !line.includes('.vibesync'))
+      .map(line => line.slice(2).trim());
   } catch {}
 
   const matcher = compileGlobMatcher(Array.isArray(allowedPaths) && allowedPaths.length ? allowedPaths : ['*']);
