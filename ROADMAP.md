@@ -18,6 +18,10 @@ portable, platform-specific security behavior is unambiguous, supervised work
 recovers predictably after a restart, and a new user can install and complete a
 verified example workflow without cloning internal development assumptions.
 
+It must also pass a repeatable **baseline consolidation run**: one command that
+proves the packaged product, canonical MCP skill, and supported agent-IDE
+integration guidance agree with the released behavior.
+
 ## Priority 0 — unblock a credible 1.0
 
 ### 1. Make persistence a deliberate runtime boundary
@@ -74,9 +78,43 @@ refuses `required` gates when it is unavailable.
 **Exit evidence:** unsupported-required runs explain the missing capability and
 safe alternatives; no platform receives weaker containment than requested.
 
+### 4. Establish a baseline consolidation run and one canonical MCP skill
+
+**Why now:** VibeSync already has a product-baseline document and an internal
+`vibesync-mcp` skill, but neither is yet a release gate that proves the shipped
+package, MCP surface, and agent-IDE guidance remain aligned.
+
+**Product decision:** maintain one canonical skill source, not one copy of the
+workflow per IDE. Client integrations should install, reference, or generate
+thin bindings to that source; client-specific material is limited to connection
+configuration and capability notes.
+
+**Deliverables**
+
+- Promote `vibesync-mcp` into the distributable canonical skill package, with a
+  concise role boundary: worker MCP for agents; a separately human-controlled
+  admin MCP connection for planning and approvals.
+- Define an explicit supported-client matrix. Each entry states how it consumes
+  the canonical skill, the required MCP configuration, and any known limitation;
+  unsupported IDEs receive a generic MCP setup rather than a divergent skill.
+- Add `vibesync baseline` (and a Bun equivalent) as a deterministic
+  consolidation command. It must validate the package file list, CLI help,
+  worker/admin MCP tool catalogs, skill metadata, generated MCP configuration,
+  and the documented runtime/policy matrix.
+- Produce a small machine-readable baseline receipt containing version, Git
+  revision, runtime, platform, checked surfaces, and pass/fail evidence. Keep
+  full logs as bounded artifacts, not in the receipt.
+- Make the release workflow fail when a public document names a missing tool,
+  a client binding points to a non-canonical skill, or the published package
+  omits a required skill/configuration asset.
+
+**Exit evidence:** a clean checkout runs the consolidation command successfully;
+one supported agent IDE completes the worker flow using the canonical skill; and
+the resulting receipt is attached to the release candidate.
+
 ## Priority 1 — make the proven workflow easy to adopt
 
-### 4. Ship an installable, supported first-run path
+### 5. Ship an installable, supported first-run path
 
 - Publish and test package installation (`npx` and Bun equivalent), including
   exported CLI assets.
@@ -88,7 +126,7 @@ safe alternatives; no platform receives weaker containment than requested.
 **Exit evidence:** clean-machine CI completes initialization, claim,
 verification, and settlement for both examples.
 
-### 5. Turn existing reliability coverage into a public compatibility matrix
+### 6. Turn existing reliability coverage into a public compatibility matrix
 
 - Add fault injection for concurrent claims, lease-expiry races, worktree
   conflicts, interrupted gates, HUD reconnect, and policy migration.
@@ -100,7 +138,7 @@ verification, and settlement for both examples.
 **Exit evidence:** CI exposes the matrix and every documented degraded mode has
 a regression test.
 
-### 6. Surface the operational evidence VibeSync already records
+### 7. Surface the operational evidence VibeSync already records
 
 - Promote lease, gate, and handoff evidence into a searchable dashboard “needs
   human attention” view.
@@ -116,7 +154,7 @@ changed?” from one dashboard view or handoff card.
 
 ## Priority 2 — compound usability after the foundation is stable
 
-### 7. Improve agent onboarding without bloating the default protocol
+### 8. Improve agent onboarding without bloating the default protocol
 
 - Retain compact worker responses and `detail: full` for evidence-heavy calls.
 - Add an optional training/profile mode explaining claim → heartbeat → verify →
@@ -124,13 +162,42 @@ changed?” from one dashboard view or handoff card.
 - Measure protocol changes with deterministic fixtures before treating them as
   efficiency improvements.
 
-### 8. Strengthen policy and documentation ergonomics
+### 9. Strengthen policy and documentation ergonomics
 
 - Publish a versioned policy schema and concise threat-model/TCB guide.
 - Make secret-scan-before-settle a reviewed default candidate, configurable for
   false-positive-sensitive repositories.
 - Add recovery output that lists restorable state and separately flags
   uncommitted worktrees requiring human review.
+
+### 10. Make managed agent work token- and time-efficient
+
+**Why now:** the roadmap dogfood run showed that a valid small documentation
+task can become disproportionately expensive when diagnostics are unbounded,
+clients repeatedly reconnect, or a gate contract resolves more broadly than its
+author intended.
+
+**Deliverables**
+
+- Add optional task budgets for agent context/tokens and elapsed time, with a
+  clear pre-limit handoff or human-decision state rather than silent overrun.
+- Standardize bounded evidence responses: failure summary first, named artifact
+  and tail/range retrieval on demand, and hard response-size defaults for logs.
+- Support a persistent local MCP session for a managed workflow so preview,
+  approval, claim, heartbeat, and settlement do not repeatedly create companion
+  HUD listeners.
+- Validate structured `node-test` contracts during preview: preserve an explicit
+  target, show the resolved argv, and reject a broadened command unless the
+  administrator explicitly approves that expansion.
+- Make fast-path provisioning transactional: feature, task, and worktree either
+  all succeed or are rolled back with an actionable failure result.
+- Publish a compact dogfood protocol: plan the task before editing, use focused
+  gates, read bounded diagnostics, and stop for a human decision after the
+  first workflow-level failure.
+
+**Exit evidence:** a scripted small-task run stays inside its declared evidence
+and context budgets, uses one MCP session, runs only its declared focused gate,
+and leaves no partial fast-path records after injected failures.
 
 ## Dogfood findings
 
@@ -161,13 +228,14 @@ issues worth tracking under Priority 1:
 ## Sequencing
 
 1. **0.6:** persistence decision and migration harness; adapter-restart design;
-   platform containment matrix.
-2. **0.7:** restart reconciliation and platform policy UX; fault injection and
-   compatibility CI.
+   platform containment matrix; canonical-skill package design.
+2. **0.7:** restart reconciliation, platform policy UX, baseline consolidation
+   command, and supported-agent-IDE matrix.
 3. **0.8:** package/install path, maintained examples, operational metrics,
-   attention dashboard, and fast-path transaction hardening.
-4. **1.0:** release only after all Priority 0 exit evidence and the clean-machine
-   example workflow are continuously verified.
+   attention dashboard, fast-path transaction hardening, and managed-work
+   efficiency guardrails.
+4. **1.0:** release only after all Priority 0 exit evidence, the consolidation
+   receipt, and the clean-machine example workflow are continuously verified.
 5. **Post-1.0:** training mode, richer handoffs, optional stronger platform
    sandbox backends, and ecosystem integrations.
 
