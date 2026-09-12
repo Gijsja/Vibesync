@@ -23,9 +23,9 @@ While VibeSync contains a feature-complete workflow engine, production-grade tes
 ### 1. Stdio Model Context Protocol (MCP) Server
 - **Spec Compliance:** Implements MCP `@modelcontextprotocol/sdk` over standard input/output.
 - **Contract-Bound Execution:** Exposes fine-grained tools for:
-  - Feature lifecycle (`vibesync_create_feature`, `vibesync_get_feature`)
-  - Task lease lifecycle (`vibesync_claim_task`, `vibesync_start_task`, `vibesync_heartbeat_task`, `vibesync_release_task`)
-  - Verification & settlement (`vibesync_verify_task`, `vibesync_settle_task`)
+  - Feature lifecycle (`vibesync_create_feature`, `vibesync_preview_feature`, `vibesync_settle_feature`)
+  - Task lease lifecycle (`vibesync_claim_task`, `vibesync_heartbeat_task`, `vibesync_release_task`, `vibesync_preview_task`)
+  - Verification & settlement (`vibesync_partial_verify`, `vibesync_verify_and_settle`)
   - Discovery & park incubator (`vibesync_park_insight`, `vibesync_merge_insights`, `vibesync_promote_insight`)
   - State queries (`vibesync_get_summary`, `vibesync_get_operation`)
 - **Safety Annotations:** Tools carry explicit read-only, destructive, and idempotency annotations to guide LLM tool planners.
