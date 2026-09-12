@@ -47,9 +47,9 @@ test('computeAttentionQueue categorizes blocked, review, and in-progress tasks',
     // 3. Blocked task
     createTask({ id: 'TASK-BLOCK', feature_id: 'FEAT-Q', title: 'Blocked Work' }, db);
     claimTask({ taskId: 'TASK-BLOCK', actorName: 'flaky' }, db, sandbox.dir);
-    recordGateFailure(db, 'TASK-BLOCK', { failure: 'fail 1' });
-    recordGateFailure(db, 'TASK-BLOCK', { failure: 'fail 2' });
-    recordGateFailure(db, 'TASK-BLOCK', { failure: 'fail 3' });
+    recordGateFailure(db, 'TASK-BLOCK', { failure: 'fail 1' }, { repoRoot: sandbox.dir });
+    recordGateFailure(db, 'TASK-BLOCK', { failure: 'fail 2' }, { repoRoot: sandbox.dir });
+    recordGateFailure(db, 'TASK-BLOCK', { failure: 'fail 3' }, { repoRoot: sandbox.dir });
 
     const queue = computeAttentionQueue(db, sandbox.dir);
     assert.equal(queue.counts.decisions, 1);

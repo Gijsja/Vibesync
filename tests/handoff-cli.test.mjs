@@ -116,9 +116,9 @@ test('generateHandoffCard flags blocked tasks with circuit breaker warnings', as
     claimTask({ taskId: 'TASK-B1', actorName: 'flaky-agent' }, db, sandbox.dir);
 
     // Trip the circuit breaker
-    recordGateFailure(db, 'TASK-B1', { failure: 'gate 1 failed' });
-    recordGateFailure(db, 'TASK-B1', { failure: 'gate 2 failed' });
-    recordGateFailure(db, 'TASK-B1', { failure: 'gate 3 failed' });
+    recordGateFailure(db, 'TASK-B1', { failure: 'gate 1 failed' }, { repoRoot: sandbox.dir });
+    recordGateFailure(db, 'TASK-B1', { failure: 'gate 2 failed' }, { repoRoot: sandbox.dir });
+    recordGateFailure(db, 'TASK-B1', { failure: 'gate 3 failed' }, { repoRoot: sandbox.dir });
 
     const card = generateHandoffCard({ taskId: 'TASK-B1', db, repoRoot: sandbox.dir });
     assert.match(card, /\[ ⏸️ BLOCKED \] TASK-B1/);
