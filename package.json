@@ -76,6 +76,7 @@
     ".vibesync/dashboard.html",
     ".mcp.example.json",
     ".mcp.bun.example.json",
+    "skills/vibesync-mcp/",
     "README.md",
     "HARDENING.md",
     "docs/USAGE.md",
