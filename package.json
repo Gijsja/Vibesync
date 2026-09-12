@@ -40,6 +40,8 @@
     "repair:bun": "bun scripts/vibesync-bun-repair.mjs",
     "hud": "node scripts/vibesync.mjs --hud",
     "hud:bun": "bun scripts/vibesync-bun.mjs --hud",
+    "baseline": "node scripts/vibesync-baseline.mjs",
+    "baseline:bun": "bun scripts/vibesync-bun-baseline.mjs",
     "check:public": "node scripts/check-public.mjs"
   },
   "dependencies": {
@@ -62,7 +64,8 @@
     "vibesync-bun": "./scripts/vibesync-bun.mjs",
     "vibesync-bun-repair": "./scripts/vibesync-bun-repair.mjs",
     "vibesync-init": "./scripts/vibesync-init.mjs",
-    "vibesync-repair": "./scripts/vibesync-repair.mjs"
+    "vibesync-repair": "./scripts/vibesync-repair.mjs",
+    "vibesync-baseline": "./scripts/vibesync-baseline.mjs"
   },
   "files": [
     "src/",
@@ -71,6 +74,8 @@
     "scripts/vibesync-bun-repair.mjs",
     "scripts/vibesync-init.mjs",
     "scripts/vibesync-repair.mjs",
+    "scripts/vibesync-baseline.mjs",
+    "scripts/vibesync-bun-baseline.mjs",
     "scripts/check-public.mjs",
     "scripts/export-public.mjs",
     ".vibesync/dashboard.html",

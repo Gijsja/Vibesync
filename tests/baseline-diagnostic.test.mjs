@@ -8,6 +8,7 @@ import { inspectBaselineReadiness } from '../src/workspace.mjs';
 import { previewTask } from '../src/policy.mjs';
 import { createFeature } from '../src/features.mjs';
 import { createTask } from '../src/tasks.mjs';
+import { createBaselineReceipt, parseBaselineArgs, RECEIPT_FORMAT } from '../scripts/vibesync-baseline.mjs';
 
 const queued = [];
 const test = typeof Bun === 'undefined' ? nodeTest : (n, f) => queued.push({ n, f });
@@ -131,6 +132,57 @@ test('MCP vibesync_preview_task compact response includes baseline fields', asyn
     assert.equal(parsed.baseline_clean, false);
     assert.ok(parsed.baseline_warning.includes('affecting task allowed_paths'));
   });
+});
+
+test('baseline command emits a bounded machine-readable receipt and reports release-surface drift', async () => {
+  await withSandbox(async sandbox => {
+    const receipt = await createBaselineReceipt({ repoRoot: sandbox.dir });
+    assert.equal(receipt.format, RECEIPT_FORMAT);
+    assert.equal(receipt.status, 'fail');
+    assert.ok(receipt.git_revision);
+    assert.ok(receipt.runtime.name === 'node' || receipt.runtime.name === 'bun');
+    assert.equal(receipt.platform.os, process.platform);
+    assert.deepEqual(receipt.checked_surfaces, receipt.evidence.map(item => item.id));
+    assert.ok(receipt.evidence.some(item => item.id === 'package' && item.status === 'fail'));
+    assert.ok(Buffer.byteLength(JSON.stringify(receipt)) < 32 * 1024);
+  });
+});
+
+test('baseline command passes when every declared release surface agrees', async () => {
+  await withSandbox(async sandbox => {
+    const write = (relative, content) => {
+      const target = path.join(sandbox.dir, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content);
+    };
+    write('scripts/vibesync.mjs', "console.log('--mcp-role --agent-instructions --queue --handoff --eject');\n");
+    write('scripts/vibesync-bun.mjs', "console.log('--mcp-role --agent-instructions --queue --handoff --eject');\n");
+    write('scripts/vibesync-baseline.mjs', '');
+    write('scripts/vibesync-bun-baseline.mjs', '');
+    write('skills/vibesync-mcp/SKILL.md', `---\nname: vibesync-mcp\ndescription: Canonical workflow\n---\nWorker and admin roles use vibesync_preview_task, vibesync_claim_task, and vibesync_verify_and_settle.\n`);
+    const nodeConfig = JSON.stringify({ mcpServers: { vibesync: { command: 'node', args: ['/package/scripts/vibesync.mjs'] } } });
+    const bunConfig = JSON.stringify({ mcpServers: { vibesync: { command: 'vibesync-bun', args: [] } } });
+    write('.mcp.example.json', nodeConfig);
+    write('.mcp.bun.example.json', bunConfig);
+    write('docs/AGENT_IDE_SETUP.md', 'Node and Bun runtime matrix. Worker and admin policy, approval, and sandbox behavior. Canonical skill: skills/vibesync-mcp/SKILL.md.\n');
+    write('package.json', JSON.stringify({
+      version: '1.0.0',
+      files: ['scripts/vibesync-baseline.mjs', 'scripts/vibesync-bun-baseline.mjs', 'skills/vibesync-mcp/', '.mcp.example.json', '.mcp.bun.example.json'],
+      scripts: { baseline: 'node scripts/vibesync-baseline.mjs', 'baseline:bun': 'bun scripts/vibesync-bun-baseline.mjs' },
+      bin: { 'vibesync-baseline': './scripts/vibesync-baseline.mjs' }
+    }));
+
+    const receipt = await createBaselineReceipt({ repoRoot: sandbox.dir });
+    assert.equal(receipt.status, 'pass', JSON.stringify(receipt.evidence));
+    assert.ok(receipt.evidence.every(item => item.status === 'pass'));
+  });
+});
+
+test('baseline argument parsing supports explicit repository and receipt paths', () => {
+  const parsed = parseBaselineArgs(['--repo', '.', '--output', 'receipt.json']);
+  assert.equal(parsed.repoRoot, path.resolve('.'));
+  assert.equal(parsed.output, path.resolve('receipt.json'));
+  assert.throws(() => parseBaselineArgs(['--unknown']), /Unknown option/);
 });
 
 if (typeof Bun !== 'undefined') {
