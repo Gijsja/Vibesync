@@ -141,8 +141,8 @@ export function inspectWorktreeChanges(worktreePath, baseCommit = 'HEAD') {
   try {
     const status = execGitWithBackoff(['status', '--porcelain'], { cwd: worktreePath });
     for (const line of status.split(/\r?\n/).filter(Boolean)) {
-      const code = line.slice(0, 2);
-      const file = line.slice(3).trim();
+      const code = line.slice(0, 2).trim();
+      const file = line.slice(2).trim();
       if (code === '??') {
         untracked.push(file);
       } else {

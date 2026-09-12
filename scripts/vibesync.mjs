@@ -6,7 +6,7 @@ import { startServer } from '../src/server.mjs';
 import { runMcpServer } from '../src/mcp.mjs';
 import { waitForOperations, recoverInterruptedOperations } from '../src/operations.mjs';
 import { initializeWorkspace } from '../src/init.mjs';
-import { getAgentInstructions, generateHandoffCard, performHumanTakeover } from '../src/handoff.mjs';
+import { getAgentInstructions, generateHandoffCard, performHumanTakeover, findAttentionTask } from '../src/handoff.mjs';
 import { computeAttentionQueue, formatAttentionQueue } from '../src/telemetry.mjs';
 import { provisionFastPathTask } from '../src/fastpath.mjs';
 
@@ -96,12 +96,16 @@ async function main() {
   }
   const isEject = values.eject || positionals[0] === 'eject';
   if (isEject) {
-    const targetTaskId = values.task || (positionals[0] === 'eject' ? positionals[1] : positionals[0]) || null;
-    if (!targetTaskId) {
-      throw new Error('--eject requires a task ID (e.g. vibesync --eject TASK-01)');
-    }
+    let targetTaskId = values.task || (positionals[0] === 'eject' ? positionals[1] : positionals[0]) || null;
     const db = getDb(null, repoRoot);
     try {
+      if (!targetTaskId) {
+        const attentionTask = findAttentionTask(db);
+        if (attentionTask) targetTaskId = attentionTask.id;
+      }
+      if (!targetTaskId) {
+        throw new Error('--eject requires a task ID (e.g. vibesync --eject TASK-01) or an active task in repository');
+      }
       performHumanTakeover(targetTaskId, db, repoRoot);
       process.stdout.write(`[VibeSync] Task ${targetTaskId} successfully ejected to human operator.\n  Assigned Actor: human\n  Circuit Breaker: Reset (0 failures)\n  Lease: Fresh 45-minute lease granted\n`);
     } finally {
