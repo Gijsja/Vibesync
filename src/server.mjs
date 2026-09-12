@@ -24,7 +24,7 @@ import {
   getDashboardPath
 } from './config.mjs';
 import { computeProviderUsage, computeFeatureEfficiency, updateProviderUsageConfig } from './usage.mjs';
-import { previewTask, previewFeature } from './policy.mjs';
+import { previewTask, previewFeature, approveTaskCommand } from './policy.mjs';
 import { scanSecretEntries } from './secrets.mjs';
 import { cleanAbandonedGateSlots } from './scheduler.mjs';
 import { buildLeaseRollup, listLeaseRollups } from './audit.mjs';
@@ -689,6 +689,40 @@ export async function startServer(options = {}) {
         const result = previewTask({ taskId: body.taskId, actorName: body.actorName || 'unknown' }, db, repoRoot);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(result));
+      }
+      if (pathname === '/api/tasks/approve' && req.method === 'POST') {
+        const body = await readBodyJson(req);
+        if (typeof body.taskId !== 'string' || !body.taskId.trim()) {
+          throw requestError(400, 'taskId must be a non-empty string.');
+        }
+        if (!['setup', 'gate', 'feature'].includes(body.phase)) {
+          throw requestError(400, 'phase must be setup, gate, or feature.');
+        }
+        if (!Number.isInteger(body.index) || body.index < 0) {
+          throw requestError(400, 'index must be a non-negative integer.');
+        }
+        if (!db.prepare('SELECT 1 FROM tasks WHERE id = ?').get(body.taskId)) {
+          throw requestError(404, `Task ${body.taskId} not found.`);
+        }
+
+        // The loopback HUD is the human administration surface. Never accept an
+        // actor supplied by browser input for this authority-bearing mutation.
+        const preview = previewTask({ taskId: body.taskId, actorName: 'human' }, db, repoRoot);
+        const command = preview.commands.find(item => item.phase === body.phase && item.index === body.index);
+        if (!command) throw requestError(400, `No ${body.phase} command exists at index ${body.index}.`);
+
+        const result = approveTaskCommand({
+          taskId: body.taskId,
+          phase: body.phase,
+          index: body.index,
+          approvedBy: 'human'
+        }, db, repoRoot);
+        broadcastState();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ...result,
+          command: { phase: command.phase, index: command.index, display: command.display, policyHash: command.policyHash }
+        }));
       }
       if (pathname === '/api/features/preview' && req.method === 'POST') {
         const body = await readBodyJson(req);

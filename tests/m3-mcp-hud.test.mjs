@@ -124,6 +124,7 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
       const workerTools = await worker._requestHandlers.get(ListToolsRequestSchema.shape.method.value)({ method: 'tools/list', params: {} });
       assert.ok(workerTools.tools.some(tool => tool.name === 'vibesync_claim_task'));
       assert.ok(!workerTools.tools.some(tool => tool.name === 'vibesync_create_task'));
+      assert.ok(!workerTools.tools.some(tool => tool.name === 'vibesync_approve_task_command'));
       const workerCall = worker._requestHandlers.get(CallToolRequestSchema.shape.method.value);
       const forbidden = await workerCall({ method: 'tools/call', params: { name: 'vibesync_create_task', arguments: {} } });
       assert.equal(JSON.parse(forbidden.content[0].text).error.code, 'ROLE_FORBIDDEN');
@@ -401,6 +402,87 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
         await serverInstance.close();
       }
     });
+  });
+
+  await t.test('dashboard previews and approves exact task commands through the human surface', async () => {
+    await withSandbox(async (sandbox) => {
+      fs.mkdirSync(path.join(sandbox.dir, '.vibesync'), { recursive: true });
+      fs.writeFileSync(path.join(sandbox.dir, '.vibesync', 'policy.json'), JSON.stringify({
+        approval_mode: 'enforce',
+        sandbox_mode: 'process'
+      }));
+      const db = getDb(path.join(sandbox.dir, '.vibesync', 'state.db'), sandbox.dir);
+      createFeature({
+        id: 'FEAT-APPROVAL-UI',
+        title: 'Approval UI',
+        target_milestone: 'v1.0',
+        spec_markdown: 'A human can review and approve a resolved task command.',
+        holistic_gate_cmd: { type: 'argv', argv: ['node', '-e', 'process.exit(0)'], idempotency: 'safe' }
+      }, db);
+      createTask({
+        id: 'TASK-APPROVAL-UI.1',
+        feature_id: 'FEAT-APPROVAL-UI',
+        title: 'Approve one command',
+        allowed_paths: ['src/**'],
+        required_gates: [{ type: 'argv', argv: ['node', '-e', 'process.exit(0)'], idempotency: 'safe' }]
+      }, db);
+
+      const serverInstance = await startServer({ port: 4145, host: '127.0.0.1', repoRoot: sandbox.dir, db, quiet: true });
+      const client = new VibeSyncHttpClient(serverInstance.port);
+      try {
+        const before = await client.request('POST', '/api/tasks/preview', {
+          body: { taskId: 'TASK-APPROVAL-UI.1', actorName: 'human' }
+        });
+        assert.equal(before.status, 200);
+        const gate = before.json.commands.find(command => command.phase === 'gate');
+        assert.equal(gate.approval.runnable, false);
+        assert.match(gate.policyHash, /^[a-f0-9]{64}$/);
+
+        const invalidPhase = await client.request('POST', '/api/tasks/approve', {
+          body: { taskId: 'TASK-APPROVAL-UI.1', phase: 'worker', index: 0 }
+        });
+        assert.equal(invalidPhase.status, 400);
+        assert.equal(invalidPhase.json.error, 'phase must be setup, gate, or feature.');
+
+        const invalidIndex = await client.request('POST', '/api/tasks/approve', {
+          body: { taskId: 'TASK-APPROVAL-UI.1', phase: 'gate', index: 4 }
+        });
+        assert.equal(invalidIndex.status, 400);
+        assert.equal(invalidIndex.json.error, 'No gate command exists at index 4.');
+
+        const missingTask = await client.request('POST', '/api/tasks/approve', {
+          body: { taskId: 'TASK-MISSING', phase: 'gate', index: 0 }
+        });
+        assert.equal(missingTask.status, 404);
+        assert.equal(missingTask.json.error, 'Task TASK-MISSING not found.');
+
+        const approved = await client.request('POST', '/api/tasks/approve', {
+          body: { taskId: 'TASK-APPROVAL-UI.1', phase: 'gate', index: 0, approvedBy: 'untrusted-browser-value' }
+        });
+        assert.equal(approved.status, 200);
+        assert.equal(approved.json.success, true);
+        assert.equal(approved.json.approvedBy, 'human');
+        assert.equal(approved.json.policyHash, gate.policyHash);
+        assert.equal(approved.json.command.display, gate.display);
+
+        const after = await client.request('POST', '/api/tasks/preview', {
+          body: { taskId: 'TASK-APPROVAL-UI.1', actorName: 'human' }
+        });
+        assert.equal(after.status, 200);
+        assert.equal(after.json.commands.find(command => command.phase === 'gate').approval.runnable, true);
+
+        const state = await client.getState();
+        assert.ok(state.gateApprovals.some(approval => approval.policy_hash === gate.policyHash && approval.approved_by === 'human'));
+      } finally {
+        await serverInstance.close();
+      }
+    });
+
+    const dashboard = fs.readFileSync(path.resolve('.vibesync/dashboard.html'), 'utf8');
+    assert.match(dashboard, /Approve task commands/);
+    assert.match(dashboard, /Policy hash:/);
+    assert.match(dashboard, /\/api\/tasks\/approve/);
+    assert.match(dashboard, /changed commands require a new approval/);
   });
 
   await t.test('5. Real-Time SSE Stream: broadcasts state updates', async () => {

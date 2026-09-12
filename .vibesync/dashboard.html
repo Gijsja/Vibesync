@@ -2600,6 +2600,17 @@
   </div>
 
   <div id="action-notice" role="status" aria-live="polite" style="display:none;position:fixed;bottom:24px;right:24px;z-index:10000;max-width:min(480px,calc(100vw - 48px));padding:16px 20px;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 32px #0002"></div>
+  <div class="modal-overlay" id="approval-modal">
+    <div class="modal" style="width:760px;max-width:95vw">
+      <div class="modal-header"><div class="modal-title">Approve task commands</div><button class="modal-close" aria-label="Close" onclick="closeModal('approval-modal')">&times;</button></div>
+      <div class="modal-body">
+        <p id="approval-task-title"></p>
+        <p style="color:var(--text-muted)">Review the resolved command and policy hash before approving it. Approval is hash-bound and does not change task scope or worker permissions.</p>
+        <div id="approval-command-list" style="display:grid;gap:10px"><div class="terminal-box">Loading command preview…</div></div>
+      </div>
+      <div class="modal-footer"><button onclick="loadApprovalPreview()">Refresh</button><button class="btn-primary" onclick="closeModal('approval-modal')">Done</button></div>
+    </div>
+  </div>
   <div class="modal-overlay" id="claim-task-modal">
     <div class="modal">
       <div class="modal-header"><div class="modal-title">Start a task</div><button class="modal-close" aria-label="Close" onclick="closeModal('claim-task-modal')">&times;</button></div>
@@ -3284,6 +3295,7 @@
                       <div class="task-actions-col">
                         <button class="btn-sm" onclick="viewTaskLogs(${actionArg(t.id)})">Logs</button>
                         <button class="btn-sm" onclick="openHandoffModal(${actionArg(t.id)})" title="View handoff card with telemetry &amp; evidence">📋 Handoff</button>
+                        ${!isSuperseded && t.status !== 'settled' ? `<button class="btn-sm" onclick="openApprovalModal(${actionArg(t.id)})">Approvals</button>` : ''}
                         ${(t.status === 'ready' || t.status === 'backlog' || t.status === 'blocked') && !isSuperseded ? `<button class="btn-primary btn-sm" onclick="openClaimTask(${actionArg(t.id)})">${t.status === 'blocked' ? 'Human takeover' : 'Start task'}</button>` : ''}
                         ${(t.status === 'ready' || t.status === 'backlog' || t.status === 'review' || t.status === 'blocked') && !isSuperseded ? `<button class="btn-sm" onclick="supersedeTask(${actionArg(t.id)})">Supersede</button>` : ''}
                         ${t.status === 'in_progress' ? `<button class="btn-sm" onclick="releaseTask(${actionArg(t.id)})">Release</button>` : ''}
@@ -4143,6 +4155,52 @@
         const commands = (data.commands || []).map(item => `${item.phase}: ${item.display || displayCommand(item)}${item.approval?.runnable ? '' : ' — approval required'}`);
         preview.textContent = `${data.model?.id || 'unknown'} · ${data.suitability || 'review required'}\n${commands.join('\n') || 'No declared commands.'}`;
       } catch (error) { preview.textContent = `Preview unavailable: ${error.message}`; }
+    }
+    let approvalTaskId = null;
+    function openApprovalModal(taskId) {
+      approvalTaskId = taskId;
+      const task = currentState?.tasks?.find(item => item.id === taskId);
+      document.getElementById('approval-task-title').textContent = task ? `${task.id}: ${task.title}` : taskId;
+      openModal('approval-modal');
+      loadApprovalPreview();
+    }
+    async function loadApprovalPreview() {
+      const root = document.getElementById('approval-command-list');
+      if (!approvalTaskId || !root) return;
+      root.innerHTML = '<div class="terminal-box">Loading command preview…</div>';
+      try {
+        const data = await postAction('/api/tasks/preview', { taskId: approvalTaskId, actorName: 'human' });
+        const commands = data.commands || [];
+        root.innerHTML = commands.length ? commands.map(command => {
+          const approved = Boolean(command.approval?.runnable);
+          const approvedBy = command.approval?.approval?.approved_by;
+          const display = command.display || displayCommand(command);
+          const hash = command.policyHash || '';
+          return `<div class="terminal-box" style="display:grid;gap:8px;white-space:normal">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+              <strong>${escapeHtml(command.phase)} command ${Number(command.index) + 1}</strong>
+              <span style="color:${approved ? 'var(--green)' : 'var(--yellow)'}">${approved ? `Approved${approvedBy ? ` by ${escapeHtml(approvedBy)}` : ''}` : 'Approval required'}</span>
+            </div>
+            <code style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(display)}</code>
+            <div style="font-size:10px;color:var(--text-muted);overflow-wrap:anywhere">Policy hash: <code>${escapeHtml(hash)}</code></div>
+            <div><button class="btn-primary btn-sm" ${approved ? 'disabled' : ''} onclick="approveDashboardCommand(${actionArg(command.phase)}, ${Number(command.index)}, ${actionArg(display)}, ${actionArg(hash)})">${approved ? 'Approved' : 'Approve command'}</button></div>
+          </div>`;
+        }).join('') : '<div class="terminal-box">No commands are declared for this task.</div>';
+      } catch (error) {
+        root.innerHTML = `<div class="terminal-box" style="color:var(--red)">${escapeHtml(error.message)}</div>`;
+      }
+    }
+    async function approveDashboardCommand(phase, index, display, policyHash) {
+      const shortHash = policyHash ? policyHash.slice(0, 12) : 'unavailable';
+      const accepted = await confirmAction(`Approve this ${phase} command?\n\n${display}\n\nPolicy hash: ${shortHash}\n\nThis authorizes the exact resolved command; changed commands require a new approval.`);
+      if (!accepted) return;
+      try {
+        const result = await postAction('/api/tasks/approve', { taskId: approvalTaskId, phase, index });
+        notifyUser(`Approved ${phase} command ${index + 1} (${result.policyHash.slice(0, 12)}).`);
+        await loadApprovalPreview();
+      } catch (error) {
+        notifyError(error.message);
+      }
     }
     async function submitClaimTask() {
       const button = document.getElementById('claim-submit');
