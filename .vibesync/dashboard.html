@@ -743,8 +743,8 @@
     .workflow-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
     .workflow-title { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: .3px; }
     .workflow-live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-    .workflow-body { background: var(--panel-hover); padding: 6px; min-height: 72px; overflow: auto; }
-    .workflow-body svg { display: block; width: 100%; min-width: 0; height: auto; }
+    .workflow-body { background: var(--panel-hover); padding: 8px 12px; min-height: 72px; max-height: 480px; overflow: auto; }
+    .workflow-body svg { display: block; height: auto; max-width: none; margin: 0 auto; }
     .workflow-body .label { font-size: 11px; }
     .workflow-body .node { cursor: pointer; }
     .workflow-body .node:focus-visible rect, .workflow-body .node:focus-visible polygon { stroke: var(--accent); stroke-width: 4px; }
@@ -752,6 +752,59 @@
     .workflow-legend span::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; background: currentColor; }
     .workflow-empty, .workflow-error { color: var(--text-muted); font-size: 12px; padding: 18px; text-align: center; }
     .workflow-error { color: var(--red); }
+
+    /* Feature Scoped Execution Pipeline */
+    .feature-kanban-wrap {
+      margin: 10px 0 12px 0;
+      background: var(--panel-hover);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      overflow-x: auto;
+    }
+    .feature-kanban-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .feature-kanban-title {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .feature-kanban-body {
+      min-height: 48px;
+      max-height: 240px;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+    .feature-kanban-body svg {
+      display: block;
+      height: auto;
+      max-height: 220px;
+      max-width: none;
+    }
+    .feature-kanban-body .node {
+      cursor: pointer;
+    }
+    .feature-kanban-body .node:focus-visible rect, .feature-kanban-body .node:focus-visible polygon {
+      stroke: var(--accent);
+      stroke-width: 3px;
+    }
+    .feature-kanban-empty {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 4px 0;
+    }
+    .feature-kanban-error {
+      font-size: 11px;
+      color: var(--red);
+      padding: 4px 0;
+    }
 
     /* Smart Dual-Mode Scratchpad */
     .scratchpad-section {
@@ -2661,6 +2714,7 @@
         window.agentRoomEngine.setTheme(theme);
       }
       renderWorkflow();
+      if (typeof renderFeatureKanbans === 'function') renderFeatureKanbans();
     }
 
     function toggleTheme() {
@@ -2881,7 +2935,11 @@
       requestAnimationFrame(() => document.querySelector(`[data-task-id="${CSS.escape(task.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
     }
     window.workflowTaskSelected = workflowTaskSelected;
-    if (typeof window.addEventListener === 'function') window.addEventListener('vibesync-mermaid-ready', () => renderWorkflow());
+    let featureKanbanRenderSequence = 0;
+    if (typeof window.addEventListener === 'function') window.addEventListener('vibesync-mermaid-ready', () => {
+      renderWorkflow();
+      renderFeatureKanbans();
+    });
 
     async function renderWorkflow() {
       const body = document.getElementById('workflow-body');
@@ -2897,25 +2955,12 @@
       if (!workflow || !mermaid) return;
       const definition = workflow.buildWorkflowDefinition(currentState, currentTheme);
       if (definition.empty) {
-        body.innerHTML = '<div class="workflow-empty">No feature contracts yet. Create a feature to see its live workflow.</div>';
+        body.innerHTML = '<div class="workflow-empty">No tasks registered yet. Create a feature and task to see the live workflow pipeline.</div>';
         return;
       }
       const sequence = ++workflowRenderSequence;
       try {
-        const compactSource = definition.source.split('\n').map(line => {
-          const feature = line.match(/^(?:subgraph GROUP|F)(\d+)\[/);
-          if (feature) {
-            const currentFeature = (currentState.features || [])[Number(feature[1])];
-            return currentFeature ? line.replace(/\[[^\]]+\]/, `[${JSON.stringify(currentFeature.id)}]`) : line;
-          }
-          const task = line.match(/^T(\d+)\[/);
-          if (task) {
-            const currentTask = definition.taskNodes.find(item => item.nodeId === `T${task[1]}`);
-            return currentTask ? line.replace(/\[[^\]]+\]/, `[${JSON.stringify(`${currentTask.taskId} · ${currentTask.status.replace('_', ' ')}`)}]`) : line;
-          }
-          return line;
-        }).join('\n');
-        const { svg } = await mermaid.render(`vibesync-workflow-${sequence}`, compactSource);
+        const { svg } = await mermaid.render(`vibesync-workflow-${sequence}`, definition.source);
         if (sequence !== workflowRenderSequence) return;
         body.innerHTML = svg;
         for (const taskNode of definition.taskNodes) {
@@ -2936,6 +2981,58 @@
         if (sequence !== workflowRenderSequence) return;
         console.error('[VibeSync workflow] Mermaid render failed', error);
         body.innerHTML = '<div class="workflow-error">Live workflow could not be rendered. Feature and task cards remain available below.</div>';
+      }
+    }
+
+    async function renderFeatureKanbans() {
+      if (!currentState || !currentState.features || !currentState.features.length) return;
+      if (!window.__vibesyncMermaidReady) return;
+      let mermaid;
+      try {
+        mermaid = await window.__vibesyncMermaidReady;
+      } catch {
+        return;
+      }
+      const workflow = window.VibeSyncWorkflow;
+      if (!workflow || !mermaid || typeof workflow.buildFeatureKanbanDefinition !== 'function') return;
+
+      const sequence = ++featureKanbanRenderSequence;
+      for (const feature of currentState.features) {
+        const container = document.getElementById(`feature-kanban-body-${feature.id}`);
+        if (!container) continue;
+
+        const definition = workflow.buildFeatureKanbanDefinition(feature, currentState.tasks, currentState.operations, currentTheme);
+        if (definition.empty) {
+          container.innerHTML = '<div class="feature-kanban-empty">No tasks registered for this feature yet.</div>';
+          continue;
+        }
+
+        try {
+          const safeId = String(feature.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+          const renderId = `vibesync-feature-kanban-${safeId}-${sequence}`;
+          const { svg } = await mermaid.render(renderId, definition.source);
+          if (sequence !== featureKanbanRenderSequence) return;
+          container.innerHTML = svg;
+
+          for (const taskNode of definition.taskNodes) {
+            const node = [...container.querySelectorAll('g.node')].find(candidate => candidate.textContent.includes(taskNode.taskId));
+            if (!node) continue;
+            node.setAttribute('tabindex', '0');
+            node.setAttribute('role', 'button');
+            node.setAttribute('aria-label', `Select ${taskNode.taskId}`);
+            const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+            title.textContent = taskNode.tooltip;
+            node.append(title);
+            node.addEventListener('click', () => workflowTaskSelected(taskNode.taskId));
+            node.addEventListener('keydown', event => {
+              if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); node.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+            });
+          }
+        } catch (error) {
+          if (sequence !== featureKanbanRenderSequence) return;
+          console.error(`[VibeSync feature kanban] Mermaid render failed for ${feature.id}`, error);
+          container.innerHTML = '<div class="feature-kanban-error">Feature kanban could not be rendered.</div>';
+        }
       }
     }
 
@@ -3113,6 +3210,16 @@
 
               ${f.spec_markdown ? `<div class="feature-spec" style="margin-top: 8px;"><strong>Outcome:</strong> ${escapeHtml(featureSummary(f.spec_markdown))}<details class="feature-contract"><summary>Full implementation contract</summary><div class="feature-contract-body">${escapeHtml(f.spec_markdown)}</div></details></div>` : ''}
 
+              <!-- Feature Scoped Execution Pipeline DAG -->
+              <div class="feature-kanban-wrap" id="feature-kanban-wrap-${escapeHtml(f.id)}">
+                <div class="feature-kanban-header">
+                  <span class="feature-kanban-title">⚡ Task Execution Pipeline</span>
+                </div>
+                <div class="feature-kanban-body" id="feature-kanban-body-${escapeHtml(f.id)}">
+                  <div class="feature-kanban-empty">Loading execution pipeline…</div>
+                </div>
+              </div>
+
               <div class="progress-bar-wrap">
                 <div class="progress-bar-fill" style="width: ${progressPct}%;"></div>
               </div>
@@ -3254,6 +3361,7 @@
           `;
         }).join('');
       }
+      renderFeatureKanbans();
     }
 
     // SSE Connection Management
@@ -5652,6 +5760,7 @@
       window.__vibesyncMermaid.initialize({ startOnLoad: false, securityLevel: 'strict', flowchart: { htmlLabels: false, useMaxWidth: false, curve: 'linear' } });
       window.dispatchEvent(new Event('vibesync-mermaid-ready'));
       if (typeof renderWorkflow === 'function') renderWorkflow();
+      if (typeof renderFeatureKanbans === 'function') renderFeatureKanbans();
       return window.__vibesyncMermaid;
     }).catch(err => {
       console.error('[VibeSync workflow] Failed to load Mermaid assets:', err);

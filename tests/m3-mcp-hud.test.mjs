@@ -26,7 +26,7 @@ import { createFeature } from '../src/features.mjs';
 import { createTask } from '../src/tasks.mjs';
 import { startServer } from '../src/server.mjs';
 import { createMcpServer } from '../src/mcp.mjs';
-import { buildWorkflowDefinition, effectiveWorkflowStatus } from '../src/workflow.mjs';
+import { buildWorkflowDefinition, buildFeatureKanbanDefinition, effectiveWorkflowStatus } from '../src/workflow.mjs';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
@@ -52,12 +52,26 @@ test('Milestone 3 Suite: Stdio MCP Server & Ambient Control HUD', async (t) => {
     assert.equal(workflow.empty, false);
     assert.equal(workflow.taskNodes.find(node => node.taskId === 'TASK-10.1').status, 'verifying');
     assert.equal(effectiveWorkflowStatus({ id: 'TASK-10.1', status: 'in_progress' }, state.operations), 'verifying');
-    assert.match(workflow.source, /subgraph GROUP0\["FEAT-10: First feature"\]/);
-    assert.ok(workflow.source.indexOf('TASK-10.1') < workflow.source.indexOf('TASK-10.2'), 'Tasks are sorted within their feature');
-    assert.match(workflow.source, /F0 --> T0/);
-    assert.doesNotMatch(workflow.source, /T0 --> T1/, 'Sibling task dependencies must not be invented');
+    assert.match(workflow.source, /flowchart LR/);
+    assert.match(workflow.source, /subgraph LANE_ready/);
+    assert.match(workflow.source, /subgraph LANE_in_progress/);
+    assert.match(workflow.source, /subgraph LANE_verifying/);
+    assert.match(workflow.source, /subgraph LANE_settled/);
+    assert.match(workflow.source, /subgraph LANE_blocked/);
+    assert.doesNotMatch(workflow.source, /T\d+ --> T\d+/, 'Sibling task dependencies must not be invented');
     for (const status of ['backlog', 'ready', 'in_progress', 'verifying', 'review', 'settled', 'blocked']) assert.match(workflow.source, new RegExp(`class T\\d+ ${status};`));
     assert.deepEqual(buildWorkflowDefinition({}, 'light'), { source: '', taskNodes: [], empty: true });
+
+    // Feature-scoped Task Execution DAG
+    const feat10Kanban = buildFeatureKanbanDefinition(state.features[1], state.tasks, state.operations, 'dark');
+    assert.equal(feat10Kanban.empty, false);
+    assert.equal(feat10Kanban.taskNodes.length, 4);
+    assert.match(feat10Kanban.source, /START_FEAT_10/);
+    assert.match(feat10Kanban.source, /SETTLE_FEAT_10/);
+    assert.doesNotMatch(feat10Kanban.source, /TASK-20/);
+
+    const emptyKanban = buildFeatureKanbanDefinition({ id: 'FEAT-EMPTY' }, state.tasks, state.operations, 'light');
+    assert.deepEqual(emptyKanban, { source: '', taskNodes: [], empty: true });
   });
 
   await t.test('1. MCP Tool Declarations: registers hardened worker and admin tools', async () => {
